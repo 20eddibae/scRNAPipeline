@@ -56,6 +56,20 @@ def run_arm(decision: str, value, dataset: str = "pbmc3k") -> dict:
         pipeline.execute(step)
     out = {k: pipeline.state.metrics.get(k) for k in METRICS}
     out["seconds"] = round(time.time() - started, 1)
+
+    # Verify the counterfactual actually happened. A step that catches its own
+    # failure and falls back produces an arm identical to the default, which
+    # reads as "this decision does not matter" when it means "this arm never
+    # ran". The scran arm did exactly that: it raised on every sparse matrix,
+    # fell back to log1p_cpm, and reported identical metrics to four decimals.
+    step = decision.split(".")[0]
+    record = next((s for s in pipeline.state.steps if s.step == step), None)
+    applied = (record.summary.get("applied") or record.summary.get("model")
+               or record.summary.get("status")) if record else None
+    out["applied"] = applied
+    out["arm_ran"] = (applied is None
+                      or str(value) in str(applied)
+                      or "unavailable" not in str(applied))
     return out
 
 
@@ -98,7 +112,12 @@ def main() -> int:
             results[str(value)] = run_arm(decision, value)
             print(f"  arm {value!r:20s} {json.dumps(results[str(value)])}", flush=True)
 
-        scored = {k: v for k, v in results.items() if v.get("ari") is not None}
+        # Only arms that actually ran can be compared.
+        scored = {k: v for k, v in results.items()
+                  if v.get("ari") is not None and v.get("arm_ran")}
+        skipped = [k for k, v in results.items() if not v.get("arm_ran")]
+        if skipped:
+            print(f"  !! arms that fell back and were excluded: {skipped}", flush=True)
         winner = max(scored, key=lambda k: scored[k]["ari"]) if scored else None
         spread = (max(v["ari"] for v in scored.values())
                   - min(v["ari"] for v in scored.values())) if scored else None
@@ -108,6 +127,7 @@ def main() -> int:
             "arms": results,
             "empirical_winner_by_ari": winner,
             "ari_spread": round(spread, 4) if spread is not None else None,
+            "arms_excluded_as_fallbacks": skipped,
             "jev": jev,
             "jev_picked_winner": (str(jev.get("choice")) == winner) if jev else None,
         }

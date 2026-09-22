@@ -29,7 +29,7 @@ class NormalizeStep(Step):
                 criteria={
                     "log1p_cpm": "The default: size-factor scaling to 1e4 then log1p. Safe, well understood.",
                     "pearson_residuals": "Analytic Pearson residuals: better for shallow UMI data and HVG selection.",
-                    "scran_pooling": "Pooled size factors: best with strong composition differences between cells.",
+                    "scran_pooling": "Median size factors: the rescaling target is set by the data rather than a fixed constant. Best with strong composition differences between cells.",
                 },
                 default="log1p_cpm",
             )
@@ -58,9 +58,9 @@ class NormalizeStep(Step):
             # scran lives in R; the python stand-in is a pooled size factor from
             # a quick clustering. Falls back cleanly when that is unavailable.
             try:
-                _scran_like(adata)
+                _median_size_factors(adata)
             except Exception as exc:
-                method = f"log1p_cpm (scran unavailable: {exc.__class__.__name__})"
+                method = f"log1p_cpm (median size factors unavailable: {exc.__class__.__name__})"
                 _log1p_cpm(adata)
         else:
             _log1p_cpm(adata)
@@ -75,12 +75,18 @@ def _log1p_cpm(adata: Any) -> None:
     sc.pp.log1p(adata)
 
 
-def _scran_like(adata: Any) -> None:
-    import numpy as np
-    from scipy.sparse import issparse
+def _median_size_factors(adata: Any) -> None:
+    """Median size-factor normalisation.
 
-    counts = adata.layers["counts"]
-    totals = np.asarray(counts.sum(axis=1)).ravel() if issparse(counts) else counts.sum(axis=1)
-    size_factors = totals / totals.mean()
-    adata.X = counts / size_factors[:, None]
+    This is NOT scran. scran estimates size factors by pooling across similar
+    cells and needs the R package; this scales each cell by its own total and
+    rescales to the median library size, which is the standard CPU stand-in and
+    is genuinely different from the fixed 1e4 target -- the target is set by the
+    data rather than by a constant.
+
+    The previous implementation divided a sparse matrix by a dense column and
+    raised ValueError on every real run, so the arm silently fell back to
+    log1p_cpm and looked identical to it.
+    """
+    sc.pp.normalize_total(adata, target_sum=None)
     sc.pp.log1p(adata)
