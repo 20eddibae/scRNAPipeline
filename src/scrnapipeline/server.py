@@ -179,6 +179,12 @@ def _authorise(token: str | None) -> None:
 
 def _events(dataset: str, context: str) -> Iterator[str]:
     """Drive the pipeline one step at a time, emitting after each."""
+    from .replay import has_replay, replay
+
+    if has_replay(dataset):
+        yield from replay(dataset, _sse)
+        return
+
     from .pipeline import Pipeline
     from .webrecord import build
 
