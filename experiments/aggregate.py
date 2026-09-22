@@ -123,6 +123,9 @@ def load_datasets():
         order = adata.var_names.astype(int).to_numpy()
         adata.var_names = features["feature_name"].astype(str).to_numpy()[order]
         adata.var_names_make_unique()
+        # Some studies repeat cell ids; CellTypist keys its output by them and
+        # returns extra rows for the duplicates.
+        adata.obs_names_make_unique()
         adata.obs["truth"] = [cxg_to_vocab(str(t)) for t in adata.obs["cell_type"]]
         out.append((f"sctab:{study[:8]}", "human blood (PBMC)", adata))
     backed.file.close()
@@ -286,14 +289,16 @@ def run_dataset(name, context, adata, settings):
     def split_policy(targets, tag):
         key = f"leiden_{tag}"
         targets = [c for c in targets if sizes[c] >= MIN_SPLIT]
-        if targets:
+        # One cluster at a time. scanpy's restrict_to with several categories
+        # runs ONE Leiden over their union -- it can merge across the parents
+        # -- and prefixes every label with all of their ids.
+        adata.obs[key] = adata.obs["leiden"].astype(str).astype("category")
+        for c in targets:
             sc.tl.leiden(adata, resolution=SPLIT_RESOLUTION, random_state=0,
-                         restrict_to=("leiden", targets), key_added=key)
-        else:
-            adata.obs[key] = adata.obs["leiden"]
+                         restrict_to=(key, [c]), key_added=key)
         sub_clusters = adata.obs[key].astype(str).to_numpy()
         new = sorted({s for s in np.unique(sub_clusters)
-                      if s.split(",")[0] in targets})
+                      if "," in s and s.split(",")[0] in targets})
         sub_sizes = {s: int((sub_clusters == s).sum()) for s in new}
         big = [s for s in new if sub_sizes[s] >= MIN_CLUSTER]
         sub_markers = markers_for(adata, key, big) if big else {}
@@ -331,6 +336,10 @@ def run_dataset(name, context, adata, settings):
         cost["celltypist"], secs["celltypist"] = 0.0, round(time.time() - tc, 2)
     except Exception as exc:
         print(f"  celltypist failed on {name}: {exc}", flush=True)
+
+    for a, v in per_cell.items():
+        if len(v) != adata.n_obs:
+            raise RuntimeError(f"{a} returned {len(v)} labels for {adata.n_obs} cells")
 
     # score on scorable cells
     sub = adata[scorable].copy()

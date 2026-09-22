@@ -457,3 +457,121 @@ and the cost asymmetry has to come from the pipeline.
   the margin measure, so the fix to the Experiment 2 defect is untested.
 - `low_quality` is unresponsive, and `doublets` over-calls T clusters. Two of
   the four options are not yet trustworthy.
+
+### Held-out: scTab blood, where it does NOT replicate
+
+The same three routes were run on `sctab_val_blood`: 8,483 raw-count cells from
+25 studies, harmony pinned, and 2 repeats. CELLxGENE labels were mapped to the
+vocabulary by name, before any prediction existed. 7,791 cells have a slot in
+the vocabulary and are scored.
+
+| route | cell acc | oracle for its partition | clusters |
+|---|---|---|---|
+| Experiment 3 production | 0.8421 | 0.9082 | 16 |
+| + margin trigger | 0.8421 | 0.9082 | 16 |
+| + `cluster_nature` (P ≥ 0.30) | 0.8421 | 0.9082 | 19 |
+
+**No gain.** It made three splits (clusters 2, 3 and 7, at P 0.77, 0.30 and
+0.38). Each half got the same name as the other, and the oracle for the
+partition did not move. None of the splits separated two types. **No loss
+either**, which is the asymmetry holding on held-out data: an unneeded split is
+free. The 0.30 threshold does not transfer. On this data 11 of 16 clusters sit
+at P(two_types) 0.22–0.38, so the clean gap seen on pbmc3k is gone. The
+pbmc3k +0.089 is one cluster on one dataset, and it should be quoted that way.
+
+---
+
+## Experiment 7: resolution with the evidence it asks for
+
+`experiments/evidence_resolution.py`. Experiment 5 found `cluster.resolution`
+answering 0.8 at every cell count. The question asks how many populations the
+tissue plausibly has, and nothing in the state says that. Here every rung is run
+first, and Jev chooses among them by what each one produced: cluster count,
+smallest cluster, stability across 3 Leiden seeds, and silhouette. The
+production naming route, with `cluster_nature`, then runs on each rung, so
+every choice is also priced in downstream cell accuracy.
+
+pbmc3k:
+
+| rung | clusters | seed stability | silhouette | ARI | downstream cell acc |
+|---|---|---|---|---|---|
+| 0.4 | 6 | 0.996 | 0.186 | 0.827 | 0.9564 |
+| 0.6 | 7 | 0.998 | 0.185 | 0.829 | **0.9575** |
+| 0.8 | 8 | 0.995 | 0.165 | **0.869** | 0.9568 |
+| 1.0 | 9 | 0.841 | 0.066 | 0.668 | 0.9572 |
+| 1.2 | 10 | 0.854 | 0.064 | 0.622 | 0.9348 |
+
+| chooser | pick | ARI | cell acc |
+|---|---|---|---|
+| default | 0.8 | 0.869 | 0.9568 |
+| Jev, production question (3×) | 0.8, 0.8, 0.8 | 0.869 | 0.9568 |
+| Jev, shown the rungs (3×) | 0.8, 0.8, 0.8 | 0.869 | 0.9568 |
+| most seed-stable (no model) | 0.6 | 0.829 | 0.9575 |
+
+**pbmc3k cannot separate the choosers.** The default is already the ARI optimum.
+
+**The finding is the flat column.** With `cluster_nature` downstream, cell
+accuracy moves by 0.001 across resolutions 0.4–1.0. In Experiment 1 the same
+decision cost 0.20 ARI. The later semantic decision absorbs the earlier tuning
+error: a merge that is too coarse gets split, and an over-split gets the same
+name twice. **Adding the right hard decision downstream made an upstream
+decision cheap.** That is a better return than making the upstream decision
+smarter.
+
+---
+
+## Experiment 8: across 12 independent datasets, does the pipeline help?
+
+`experiments/aggregate.py`, `aggregate_stats.py`, `make_tables.py`. The data are
+pbmc3k plus the 11 scTab blood studies with at least 150 cells. Each study's
+labels were assigned by its own authors. That gives 9,886 scored cells and 85
+clusters. The dataset is the unit for every mean and test. The hypotheses and
+the escalation threshold (top-2 margin < 0.5) were fixed in the script before
+the first run. Scores are cell accuracy in the shared 8-option vocabulary.
+
+| annotator | cell acc | DE agreement | composition error | $ / 1,000 clusters |
+|---|---|---|---|---|
+| ceiling (true majority type per cluster) | 0.833 | 0.651 | 0.117 | — |
+| CellTypist, per cell | **0.848** | **0.740** | **0.078** | 0 |
+| Claude Sonnet 5 | 0.788 | 0.661 | 0.161 | 1.77 |
+| split every cluster (control) | 0.786 | 0.696 | 0.146 | 0.51 |
+| **Krino cascade** (Jev; Claude Haiku when torn) | 0.773 | 0.654 | 0.177 | **0.30** |
+| Claude Haiku 4.5 | 0.769 | 0.637 | 0.181 | 0.83 |
+| Krino split-then-name | 0.761 | 0.662 | 0.185 | 0.32 |
+| Jev alone | 0.735 | 0.639 | 0.212 | 0.03 |
+| no model (marker overlap) | 0.730 | 0.604 | 0.239 | 0 |
+
+| pre-registered | Δ [95% CI] | W/T/L | p | verdict |
+|---|---|---|---|---|
+| H1 cascade ≈ Sonnet (Δ > −0.01) at ≤ 25% cost | −0.015 [−0.045, 0] | 0/11/1 | — | **not supported**; cost ratio 0.17 |
+| H2 cascade > Jev alone | +0.038 [+0.005, +0.079] | 4/8/0 | 0.125 | not supported |
+| H3 cascade > no-model baseline | +0.043 [+0.015, +0.075] | 6/6/0 | **0.031** | **supported** |
+| H4 split > cascade, and ≥ split-everything | −0.012; vs control −0.024 | 2/7/3; 2/4/6 | 0.44; 0.055 | not supported |
+
+**What holds.**
+
+- **The cascade beats no model.** H3: it won 6 datasets, tied 6 and lost none.
+- **Jev's uncertainty points at its own mistakes.** On the 17 clusters it
+  escalated, Jev was wrong 76% of the time (13/17). On the 66 it kept, it was
+  wrong 11% of the time (7/66).
+- **The cascade is cheap.** It escalates 20% of clusters, costs 17% of Sonnet
+  and takes 40% of the wall time.
+
+**What fails.**
+
+- **The cascade does not match Sonnet (H1).** It tied Sonnet on 11 of 12
+  datasets but lost the twelfth by 0.18 (sctab:21d3e683). There Jev escalated
+  to Haiku, and Haiku was wrong where Sonnet was right. H1 passed at the interim
+  look (7 datasets, 7/7 ties), so the interim result was not the result.
+- **Split-then-name adds nothing.** It is no better than the cascade, and it is
+  *worse* than splitting every cluster (H4). Where splitting helps, the lever is
+  resolution, not Jev's flag.
+- **CellTypist beats every LLM route.** Per-cell CellTypist is ahead on accuracy
+  (10/12, p = 0.009) and on DE agreement (9/12, p = 0.010). It even beats the
+  per-cluster ceiling, which no namer of whole clusters can exceed. At this task
+  a purpose-built per-cell classifier beats naming clusters, whoever does the
+  naming.
+
+**Exploratory, not a test.** A τ sweep from 0.1 to 0.9 moves cluster-level
+accuracy only between 0.795 and 0.807. The threshold is not what limits the
+cascade; the escalation target is.
