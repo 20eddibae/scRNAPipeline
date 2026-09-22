@@ -40,8 +40,15 @@ def main(argv: list[str] | None = None) -> int:
 
         import uvicorn
 
+        import site
+
         from .server import app, mount_ui
 
+        if site.ENABLE_USER_SITE:
+            # ~/.local packages shadow the env's numpy/scipy/sklearn; say so
+            # loudly rather than serve runs computed on a mix of two installs.
+            print("WARNING: user site-packages are enabled; start with "
+                  "PYTHONNOUSERSITE=1 (scripts/serve_local.sh does)", file=sys.stderr)
         web = Path(__file__).resolve().parents[2] / "web"
         uvicorn.run(mount_ui(app, str(web)), host=args.host, port=args.port)
         return 0

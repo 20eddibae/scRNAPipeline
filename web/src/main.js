@@ -277,10 +277,13 @@ function draw({ animate = false } = {}) {
  * are dropped) until they ask to follow the run again. */
 function pick(name) {
   stopReplay();
+  // Drop whatever the live view still had queued, even after the stream has
+  // ended: a replayed run finishes faster than its exchanges can play, and the
+  // queue kept moving the view after the viewer had clicked somewhere else.
+  ui.gen += 1;
+  ui.follow = Promise.resolve();
   if (ui.abort && !ui.pinned) {
     ui.pinned = true;
-    ui.gen += 1;
-    ui.follow = Promise.resolve();
     drawChrome();
   }
   select(name);

@@ -1,6 +1,11 @@
 """The learning layer: corrections are stored, blended, and re-decided honestly."""
 
+import sys
+from pathlib import Path
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scrnapipeline.feedback import FeedbackStore, LearnedDecider
 from scrnapipeline.jev import ChoiceQ, NoulQ, ScoreQ
