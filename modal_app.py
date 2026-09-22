@@ -13,7 +13,7 @@ import json
 
 import modal
 
-APP_NAME = "krino"
+APP_NAME = "sckrino"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")

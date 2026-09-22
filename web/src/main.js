@@ -96,7 +96,7 @@ async function connect() {
 
 function promptForApi() {
   const next = window.prompt(
-    "Backend URL.\n\nLocal:  http://localhost:8000\nModal:  https://<workspace>--krino-web.modal.run\n\n" +
+    "Backend URL.\n\nLocal:  http://localhost:8000\nModal:  https://<workspace>--sckrino-web.modal.run\n\n" +
     "Leave empty to go back to replaying the saved record.",
     ui.api || "http://localhost:8000",
   );
