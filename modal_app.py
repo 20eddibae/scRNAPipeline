@@ -13,7 +13,7 @@ import json
 
 import modal
 
-APP_NAME = "scrna-pipeline"
+APP_NAME = "krino"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -34,7 +34,7 @@ image = (
 app = modal.App(APP_NAME)
 
 # Datasets and run records survive between invocations.
-volume = modal.Volume.from_name("scrna-pipeline-data", create_if_missing=True)
+volume = modal.Volume.from_name("krino-data", create_if_missing=True)
 
 # `ai-gateway` holds AI_GATEWAY_API_KEY (and optionally AI_GATEWAY_BASE_URL).
 secret = modal.Secret.from_name("ai-gateway")

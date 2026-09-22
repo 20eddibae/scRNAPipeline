@@ -1,4 +1,4 @@
-# scRNAPipeline — demo UI
+# Krino — demo UI
 
 A one-page walkthrough of a single-cell run: all eight steps, and at each one
 the decision that was actually made — the options Jev was choosing between, the
@@ -62,10 +62,10 @@ On Modal:
 
 ```bash
 modal deploy modal_app.py
-# -> https://<workspace>--scrna-pipeline-web.modal.run
+# -> https://<workspace>--krino-web.modal.run
 ```
 
-then `?api=https://<workspace>--scrna-pipeline-web.modal.run`, or use the
+then `?api=https://<workspace>--krino-web.modal.run`, or use the
 backend button in the control bar, which remembers the URL.
 
 **A deployed endpoint is open unless you close it.** Set `DEMO_TOKEN` on the

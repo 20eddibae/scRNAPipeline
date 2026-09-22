@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "scrnapipeline"
+name = "krino"
 version = "0.1.0"
 description = "Agentic scRNA-seq pipeline: Claude orchestrates, Jev decides, Modal runs it."
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ integration = ["harmonypy>=0.0.10", "bbknn>=1.6"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-scrnapipeline = "scrnapipeline.cli:main"
+krino = "scrnapipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

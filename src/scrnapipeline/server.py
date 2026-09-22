@@ -52,7 +52,7 @@ def _allowed_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()] or ["*"]
 
 
-app = FastAPI(title="scRNAPipeline", docs_url=None, redoc_url=None)
+app = FastAPI(title="Krino", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),

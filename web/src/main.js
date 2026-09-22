@@ -20,7 +20,8 @@ import { renderStepper } from "./components/stepper.js";
 import { OVERVIEW, STEPS, STEP_INDEX } from "./steps/spec.js";
 import { h } from "./components/dom.js";
 
-const API_SLOT = "scrnapipeline.api";  // localStorage slot, not a credential
+const API_SLOT = "krino.api";  // localStorage slot, not a credential
+const OLD_API_SLOT = "scrnapipeline.api";  // pre-rename slot, read once so a saved URL survives
 
 const els = {
   topbar: document.getElementById("topbar"),
@@ -77,7 +78,7 @@ async function connect() {
 
 function promptForApi() {
   const next = window.prompt(
-    "Backend URL.\n\nLocal:  http://localhost:8000\nModal:  https://<workspace>--scrna-pipeline-web.modal.run\n\n" +
+    "Backend URL.\n\nLocal:  http://localhost:8000\nModal:  https://<workspace>--krino-web.modal.run\n\n" +
     "Leave empty to go back to replaying the saved record.",
     ui.api || "http://localhost:8000",
   );
@@ -241,7 +242,10 @@ function tokenFromLocation() {
 
 /** Remembering the backend URL is a per-viewer convenience, so it may fail. */
 function remembered() {
-  try { return window.localStorage.getItem(API_SLOT) ?? ""; } catch { return ""; }
+  try {
+    return window.localStorage.getItem(API_SLOT) ??
+      window.localStorage.getItem(OLD_API_SLOT) ?? "";
+  } catch { return ""; }
 }
 
 function remember(value) {

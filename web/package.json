@@ -1,5 +1,5 @@
 {
-  "name": "scrnapipeline-web",
+  "name": "krino-web",
   "private": true,
   "version": "0.1.0",
   "description": "Static walkthrough of one scRNA-seq run: the eight steps, the typed decisions behind them, and the plots at each one.",

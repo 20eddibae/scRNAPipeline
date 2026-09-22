@@ -12,7 +12,7 @@ from .registry import DEFAULT_ORDER
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="scrnapipeline")
+    parser = argparse.ArgumentParser(prog="krino")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run the pipeline")

@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable
 
-MODAL_APP = os.environ.get("MODAL_APP_NAME", "scrna-pipeline")
+MODAL_APP = os.environ.get("MODAL_APP_NAME", "krino")
 
 
 def remote_enabled() -> bool:

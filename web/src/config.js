@@ -1,7 +1,7 @@
 /* Copy that is about the demo itself rather than about any one run. */
 
 export const APP = {
-  title: "scRNAPipeline",
+  title: "Krino",
   tagline: "Claude sequences · Jev decides · Modal runs",
   repo: "https://github.com/20eddibae/scRNAPipeline",
   actors: {

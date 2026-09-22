@@ -1,6 +1,8 @@
-# scRNAPipeline
+# Krino
 
 An scRNA-seq analysis pipeline where the judgement calls are explicit.
+*Krino* is from the Greek κρίνω, "to separate, to judge": the pipeline's job
+is to separate cells, and its design is about who gets to judge each call.
 
 **Claude** decides *which step runs next*, **frames each decision point for the
 data in front of it**, and reads the marker genes.
