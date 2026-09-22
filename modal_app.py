@@ -24,11 +24,15 @@ image = (
         "igraph>=0.11",
         "scikit-learn>=1.4",
         "harmonypy>=0.0.10",
+        "bbknn>=1.6",
+        "celltypist>=1.7",
         "anthropic>=0.70",
         "typesafe-sdk>=0.1",
         "fastapi>=0.110",
     )
     .add_local_dir("src/scrnapipeline", remote_path="/root/scrnapipeline")
+    # The static page rides along, so one URL serves both the UI and its backend.
+    .add_local_dir("web", remote_path="/root/web")
 )
 
 app = modal.App(APP_NAME)
@@ -134,8 +138,12 @@ def web():
     os.environ.setdefault("SCRNA_DATA_DIR", "/vol/data")
     os.environ.setdefault("SCRNA_RUN_DIR", "/vol/runs")
 
+    from fastapi.staticfiles import StaticFiles
+
     from scrnapipeline.server import app as api
 
+    # Mounted last so /health, /datasets and /run still match first.
+    api.mount("/", StaticFiles(directory="/root/web", html=True), name="ui")
     return api
 
 

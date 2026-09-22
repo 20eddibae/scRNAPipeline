@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
+# Observations about the ground truth, kept out of anything a decider reads.
+HELD_OUT_OBS = ("label_key", "n_labelled_cells")
+
+
 @dataclass
 class Decision:
     """One typed decision at one branch point."""
@@ -75,7 +79,12 @@ class RunState:
         """
         return {
             "dataset": self.dataset,
-            "observations": self.obs,
+            # The evaluation labels are not runtime evidence. Telling a decider
+            # they exist invites it to reason from them -- the planner framed a
+            # scTab resolution question as "the label set here can help gauge
+            # how many populations are expected".
+            "observations": {k: v for k, v in self.obs.items()
+                             if k not in HELD_OUT_OBS},
             "completed_steps": self.completed(),
             "prior_decisions": {
                 f"{d.step}.{d.question}": d.value for d in self.decisions

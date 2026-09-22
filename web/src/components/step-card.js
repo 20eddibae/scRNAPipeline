@@ -1,87 +1,55 @@
-/* The detail pane for one step: what it does, the state it was handed, the
- * decisions taken inside it, Claude's prose, the plots, and what came out. */
+/* The detail pane for one step: what it does, what came out, the decisions
+ * taken inside it, and the figures. */
 
 import { buildPanels } from "../viz/index.js";
 import { renderDecision } from "./decision.js";
-import { renderLabels, renderReasoning } from "./reasoning.js";
-import { chip, fmt, h, sectionLabel } from "./dom.js";
-
-const WHO_CHIP = {
-  jev: () => chip("decision point", "jev"),
-  claude: () => chip("Claude reads the markers", "claude"),
-  neither: () => chip("no decision point", "fallback"),
-};
-
-const HIDE_FROM_SUMMARY = new Set(["framing", "labels", "markers"]);
+import { renderReasoning } from "./reasoning.js";
+import { h, fmt, stepResult } from "./dom.js";
 
 export function renderStepCard(root, run, stepName, index, { running = false } = {}) {
   const entry = run.timeline().find((e) => e.spec.name === stepName);
   if (!entry) { root.replaceChildren(); return; }
-
   const { spec, record, status, decisions } = entry;
+
+  const head = h("div", { class: "card-head" },
+    h("h2", { text: `${index + 1}. ${spec.title}` }),
+    h("span", { class: "spacer" }),
+    h("span", { class: "meta", text: running ? "running…"
+      : status === "ok" ? `${fmt(entry.seconds)} s`
+      : status === "pending" ? "not run yet" : status }),
+  );
+
   if (status === "pending" && !running) {
-    root.replaceChildren(h("section", { class: "card pending" },
-      h("div", { class: "card-head" },
-        h("h2", { text: `${index + 1}. ${spec.title}` }),
-        h("code", { class: "decision-type", text: spec.name }),
-        h("span", { class: "spacer" }),
-        chip("not run yet", "mono"),
-      ),
-    ));
+    root.replaceChildren(h("section", { class: "card pending" }, head));
     return;
   }
+
+  const result = stepResult(spec, record?.summary);
   const panels = buildPanels(spec.viz, run);
-  const reasoning = renderReasoning(run.reasoning(spec.name));
 
   const card = h("section", { class: "card" },
-    h("div", { class: "card-head" },
-      h("h2", { text: `${index + 1}. ${spec.title}` }),
-      h("code", { class: "decision-type", text: spec.name }),
-      h("span", { class: "spacer" }),
-      running ? null : WHO_CHIP[spec.decidedBy](),
-      running
-        ? chip("running…", "modal")
-        : chip(status === "ok" ? `ran in ${fmt(entry.seconds)}s` : status,
-               status === "ok" ? "mono" : "fallback"),
-    ),
+    head,
     h("div", { class: "card-body" },
-      h("p", { class: "lede", text: spec.blurb }),
-      h("p", { class: "lede", text: spec.detail }),
+      h("p", { class: "lede", text: `${spec.blurb} ${spec.detail}` }),
+
+      result ? h("div", { class: "result", text: result }) : null,
+      record?.error ? h("div", { class: "result", style: "color:var(--err)", text: record.error }) : null,
 
       decisions.length
-        ? h("div", {}, sectionLabel("decisions taken inside this step"),
+        ? h("div", {},
+            h("h3", { class: "section", text: decisions.length > 1 ? "Decisions" : "Decision" }),
             decisions.map(renderDecision))
         : running
-          ? h("p", { class: "lede", text:
-              "Claude is framing this step's questions and Jev is answering them…" })
-          : null,
+          ? h("p", { class: "small", text: "Claude is writing this step's questions and Jev is answering them." })
+          : spec.decidedBy === "jev"
+            ? h("p", { class: "small", text: "No question was asked in this step on this dataset." })
+            : null,
 
-      reasoning,
-      spec.name === "annotate" ? renderLabels(run) : null,
+      renderReasoning(run.reasoning(spec.name).filter((r) => r.kind !== "framing")),
 
-      panels.length
-        ? h("div", {}, sectionLabel("what the data looks like here"),
-            h("div", { class: "viz-grid" }, panels))
-        : null,
-
-      record ? renderSummary(record.summary) : null,
+      panels.length ? panels : null,
     ),
   );
 
   root.replaceChildren(card);
-}
-
-function renderSummary(summary) {
-  const pairs = Object.entries(summary ?? {})
-    .filter(([k, v]) => !HIDE_FROM_SUMMARY.has(k) && typeof v !== "object");
-  if (!pairs.length) return null;
-
-  return h("div", {}, sectionLabel("what this step recorded"),
-    h("div", { class: "kv" },
-      pairs.map(([k, v]) => h("div", { class: "kv-cell" },
-        h("div", { class: "kv-k", text: k }),
-        h("div", { class: "kv-v", text: fmt(v) }),
-      )),
-    ),
-  );
 }

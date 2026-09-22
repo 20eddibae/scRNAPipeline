@@ -157,7 +157,9 @@ def arm_jev(markers, sizes, context, settings):
             latencies.append(time.time() - t0)
             answer = response.answers["cell_type"]
             out[cluster] = {"label": getattr(answer, "choice", None),
-                            "confidence": getattr(answer, "confidence", None)}
+                            "confidence": getattr(answer, "confidence", None),
+                            "probabilities": dict(getattr(answer, "probabilities",
+                                                          None) or {})}
             in_tok += response.usage.input_tokens
             out_tok += response.usage.output_tokens
     return out, _cost("jev", in_tok, out_tok, latencies)

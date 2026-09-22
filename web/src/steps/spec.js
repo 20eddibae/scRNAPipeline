@@ -1,104 +1,146 @@
 /* The eight steps, as the UI describes them.
  *
- * This mirrors `src/scrnapipeline/registry.py::DEFAULT_ORDER` and each step
- * module's docstring. It is static copy only - every number, option and
- * probability shown in the UI comes from the run record, never from here.
+ * Mirrors `src/scrnapipeline/registry.py::DEFAULT_ORDER`. The prose here is
+ * static; every number, option and probability on the page comes from the run
+ * record. `result(run)` reads a step's own summary into one line, and `brief`
+ * is the short form used in the step list.
  *
- * `viz` names the visual panels a step renders; the names resolve in
- * `src/viz/index.js`. Adding a panel to a step is a one-line change here. */
+ * `viz` names the figures a step shows; the names resolve in src/viz/index.js. */
 
-/** The landing view's id. Not a step - it sits above them in the rail. */
+/** The landing view's id. Not a step - it sits above them in the list. */
 export const OVERVIEW = "overview";
+
+const n = (v) => (Number.isFinite(Number(v)) ? Number(v).toLocaleString() : "?");
 
 export const STEPS = [
   {
     name: "load",
     title: "Load",
-    blurb: "Read a public count matrix and attach held-out ground-truth labels.",
+    blurb: "Read the count matrix and attach the author's cell-type labels, held out for scoring.",
     detail:
-      "Alignment and UMI dedup are out of scope; the run starts at the count matrix. " +
-      "pbmc3k is loaded raw and its author labels are grafted by barcode from " +
-      "pbmc3k_processed, so no label ever touches the pipeline.",
+      "The run starts from counts; alignment and UMI deduplication are out of scope. " +
+      "The labels never reach the pipeline, only the evaluation step.",
     decidedBy: "neither",
     viz: ["dataset_shape"],
+    result: (s) => `${n(s.n_cells)} cells × ${n(s.n_genes)} genes, ` +
+      `${n(s.n_batches ?? 1)} batch${Number(s.n_batches) > 1 ? "es" : ""}` +
+      (s.n_labelled_cells ? `; ${n(s.n_labelled_cells)} cells carry an author label` : ""),
+    brief: (s) => `${n(s.n_cells)} cells`,
   },
   {
     name: "qc",
     title: "Quality control",
-    blurb: "Drop empty droplets, dying cells and (optionally) doublets.",
+    blurb: "Remove empty droplets and dying cells, and optionally flag doublets.",
     detail:
-      "The thresholds are the decision, not the code. A stringency preset fixes " +
-      "min genes/cell, min cells/gene and the mitochondrial ceiling together.",
+      "A stringency preset sets three cut-offs together: minimum genes per cell, " +
+      "minimum cells per gene, and the ceiling on mitochondrial reads.",
     decidedBy: "jev",
     viz: ["qc_scatter", "qc_retention"],
+    result: (s) => `Kept ${n(s.cells_after)} of ${n(s.cells_before)} cells ` +
+      `(${n(s.cells_dropped)} removed). Cut-offs: at least ${n(s.min_genes)} genes per cell, ` +
+      `at most ${n(s.max_pct_mt)}% mitochondrial reads, genes seen in at least ${n(s.min_cells)} cells.`,
+    brief: (s) => `${n(s.cells_after)} of ${n(s.cells_before)} kept`,
   },
   {
     name: "normalize",
     title: "Normalize",
-    blurb: "Depth-correct and variance-stabilise the counts.",
+    blurb: "Correct for sequencing depth and stabilise the variance.",
     detail:
-      "The genuinely contested branch point: log1p-CPM, analytic Pearson residuals, " +
-      "or pooled size factors. Each one changes which genes look variable downstream.",
+      "Log-CPM, Pearson residuals and pooled size factors each change which genes " +
+      "look variable in the next step.",
     decidedBy: "jev",
     viz: ["depth_distribution"],
+    result: (s) => s.skipped || s.reason
+      ? `Skipped: ${s.reason ?? "input already normalized"}.`
+      : `Applied ${s.applied ?? s.method}.`,
+    brief: (s) => s.applied ?? s.method ?? "",
   },
   {
     name: "features",
     title: "Features",
-    blurb: "Select highly variable genes, then reduce to principal components.",
+    blurb: "Keep the most variable genes, then reduce them to principal components.",
     detail:
-      "Two coupled knobs: how many HVGs to keep, and how many PCs carry the signal. " +
-      "Narrow sharpens dominant structure; broad preserves rare populations.",
+      "Fewer genes sharpen the dominant structure; more keep rare populations visible.",
     decidedBy: "jev",
     viz: ["pca_variance"],
+    result: (s) => `${n(s.n_hvg)} variable genes, reduced to ${n(s.n_pcs)} PCs` +
+      (Number.isFinite(s.variance_explained)
+        ? ` carrying ${(s.variance_explained * 100).toFixed(1)}% of the variance.` : "."),
+    brief: (s) => `${n(s.n_hvg)} genes · ${n(s.n_pcs)} PCs`,
   },
   {
     name: "integrate",
     title: "Integrate",
-    blurb: "Correct batch effects - if there are batches, and if they matter.",
+    blurb: "Correct batch effects, if there is more than one batch.",
     detail:
-      "The first question is whether integration is needed at all. On single-batch " +
-      "data the step is a declared no-op and Jev is never asked.",
+      "On single-batch data this step does nothing and no question is asked.",
     decidedBy: "jev",
     viz: ["batch_summary"],
+    result: (s) => s.applied && s.applied !== "none"
+      ? `Applied ${s.applied}${s.batch_key ? ` on ${s.batch_key}` : ""}.`
+      : `Not applied: ${s.reason ?? "no batches"}.`,
+    brief: (s) => (s.applied && s.applied !== "none" ? s.applied : "skipped"),
   },
   {
     name: "cluster",
     title: "Cluster",
-    blurb: "Build the neighbour graph, run Leiden, embed with UMAP.",
+    blurb: "Build a neighbour graph, split it with Leiden, and embed it with UMAP.",
     detail:
-      "Resolution is the single most consequential number in the run: it decides " +
-      "how many cell types the analysis is even able to report.",
+      "Resolution sets how many groups the analysis can report, so it bounds " +
+      "everything after it.",
     decidedBy: "jev",
     viz: ["umap_clusters", "cluster_sizes"],
+    result: (s) => `${n(s.n_clusters)} clusters at resolution ${s.resolution}.`,
+    brief: (s) => `${n(s.n_clusters)} clusters`,
   },
   {
     name: "annotate",
     title: "Annotate",
-    blurb: "Pick an annotation route, then name each cluster from its markers.",
+    blurb: "Choose an annotator, then name each cluster from its marker genes.",
     detail:
-      "Two decisions of different kinds. Which annotator to use is a typed choice " +
-      "about this matrix, so Jev makes it. Reading a ranked marker list into " +
-      "'CD14+ monocyte' is the one place in this pipeline where prose is the " +
-      "right output, so Claude does that.",
+      "Which annotator to use is a choice Jev makes. Reading a marker list into a " +
+      "cell type is done cluster by cluster, and the evidence is shown below.",
     decidedBy: "claude",
-    viz: ["umap_labels", "annotation_scores", "marker_table"],
+    viz: ["umap_labels", "marker_table", "annotation_scores"],
+    result: (s) => `${n(s.n_types_assigned)} cell types named` +
+      (s.model ? ` using ${s.model}` : "") + ".",
+    brief: (s) => `${n(s.n_types_assigned)} cell types`,
   },
   {
     name: "evaluate",
     title: "Evaluate",
-    blurb: "Score the partition and the embedding against held-out labels.",
+    blurb: "Score the clusters and the labels against the author's annotation.",
     detail:
-      "Two readouts of different kinds: ARI/NMI ask whether the decisions recovered " +
-      "known structure; a logistic probe on the PCA embedding asks how much cell-type " +
-      "information the representation carries at all.",
+      "ARI and NMI compare the clustering with the author's labels. The probe is a " +
+      "logistic regression on the PCA embedding: how much cell-type information the " +
+      "representation holds before any clustering.",
     decidedBy: "neither",
     viz: ["metrics", "confusion"],
+    result: (s) => `ARI ${fix(s.ari)}, label accuracy ${fix(s.annotation_matched_accuracy)}, ` +
+      `probe accuracy ${fix(s.probe_accuracy)}.`,
+    brief: (s) => `ARI ${fix(s.ari)}`,
   },
 ];
+
+/** Plain-English prompt for each decision id. Unknown ids fall back to the id. */
+export const QUESTIONS = {
+  "qc.stringency": "How strict should the cell filter be?",
+  "qc.flag_doublets": "Run a doublet detector?",
+  "normalize.method": "Which normalization?",
+  "features.n_hvg": "How many variable genes to keep?",
+  "features.n_pcs": "How many principal components?",
+  "integrate.method": "Which integration method?",
+  "integrate.needed": "Is batch correction needed?",
+  "cluster.resolution": "What clustering resolution?",
+  "annotate.model": "Which annotator should name the clusters?",
+};
 
 export const STEP_INDEX = Object.fromEntries(STEPS.map((s, i) => [s.name, i]));
 
 export function stepSpec(name) {
   return STEPS[STEP_INDEX[name]] ?? null;
+}
+
+function fix(v) {
+  return Number.isFinite(Number(v)) ? Number(v).toFixed(3) : "?";
 }

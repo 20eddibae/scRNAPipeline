@@ -19,7 +19,6 @@ import { renderStepCard } from "./components/step-card.js";
 import { renderStepper } from "./components/stepper.js";
 import { OVERVIEW, STEPS, STEP_INDEX } from "./steps/spec.js";
 import { h } from "./components/dom.js";
-import { APP } from "./config.js";
 
 const API_SLOT = "krino.api";  // localStorage slot, not a credential
 const OLD_API_SLOT = "scrnapipeline.api";  // pre-rename slot, read once so a saved URL survives
@@ -193,10 +192,7 @@ function drawChrome() {
     renderHeader(els.topbar, ui.run, { onReplay: ui.api ? null : toggleReplay });
     renderBanner(els.banner, ui.run);
   } else {
-    els.topbar.replaceChildren(h("div", { class: "topbar-inner" },
-      h("div", { class: "brand" },
-        h("h1", { text: APP.title }),
-        h("span", { class: "sub", text: APP.tagline }))));
+    renderHeader(els.topbar, null);
     els.banner.replaceChildren();
   }
   renderRunner(els.runner, {
@@ -233,26 +229,22 @@ function showEmpty(progress = null) {
   const item = (step, i) => {
     const live = step.name === ui.running;
     return h("li", {},
-      h("div", { class: `rail-item pending${live ? " active" : ""}` },
-        h("span", { class: "rail-num", text: String(i + 1) }),
+      h("div", { class: `rail-item ${live ? "active" : "pending"}` },
+        h("span", { class: "rail-mark", text: live ? "●" : "○" }),
         h("span", {},
-          h("span", { class: "rail-name", text: step.name }),
-          h("span", { class: "rail-who", style: "display:block", text: live ? "running…" : "" }),
+          h("span", { class: "rail-name", text: `${i + 1}. ${step.title}` }),
+          h("span", { class: "rail-who", text: live ? "running…" : "" }),
         ),
       ),
     );
   };
-  els.rail.replaceChildren(
-    h("div", { class: "rail-title", text: "pipeline" }),
-    h("ol", { class: "rail-list" }, STEPS.map(item)),
-  );
+  els.rail.replaceChildren(h("ol", { class: "rail-list" }, STEPS.map(item)));
   els.detail.replaceChildren(h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: progress ? "Running" : "Nothing has run yet" })),
     h("div", { class: "card-body" },
-      h("h2", { text: progress ? "Running" : "Nothing has run yet" }),
       h("p", { class: "lede", text: progress
-        ? `${progress} Each step appears here as soon as the backend finishes it.`
-        : "Pick a dataset and press Run pipeline. Each step fills in as the " +
-          "backend finishes it." }),
+        ? `${progress[0].toUpperCase()}${progress.slice(1)} Each step appears on the left as it finishes.`
+        : "Choose a dataset and press Run. Each step appears on the left as it finishes." }),
     ),
   ));
 }

@@ -61,7 +61,13 @@ class ClusterStep(Step):
         resolution = float(choices.get("resolution", 1.0))
         rep = "X_emb" if "X_emb" in adata.obsm else "X_pca"
 
-        sc.pp.neighbors(adata, use_rep=rep, n_neighbors=15)
+        # bbknn's correction IS the neighbour graph. Rebuilding it here would
+        # cluster on the uncorrected embedding and report bbknn as applied.
+        graph_integrated = state.obs.get("integration") == "bbknn"
+        if graph_integrated:
+            rep = "bbknn graph"
+        else:
+            sc.pp.neighbors(adata, use_rep=rep, n_neighbors=15)
         sc.tl.leiden(adata, resolution=resolution, key_added="leiden", flavor="igraph",
                      n_iterations=2, directed=False)
         sc.tl.umap(adata)

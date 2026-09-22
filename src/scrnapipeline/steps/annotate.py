@@ -121,6 +121,9 @@ class AnnotateStep(Step):
                 f"fallback from {model} ({exc.__class__.__name__}: {exc})"
             where = "local"
 
+        if state.obs.get("label_key") == "cell_type":
+            raise RuntimeError("ground truth lives in obs['cell_type']; writing "
+                               "predictions there would score the run against itself")
         if per_cell is not None:
             adata.obs["cell_type"] = per_cell
         else:

@@ -1,48 +1,70 @@
-/* Design tokens.
-   One place to restyle the whole demo. The palette follows the TypeSafe/Jev
-   playground's reading: near-black surfaces, one accent per actor, and
-   probability shown as ink rather than as a number in prose. */
+/* Design tokens. One place to restyle the page.
+   Light by default, like most analysis tools; dark follows the OS setting.
+   Colour is reserved for data and for who made a call. */
 
 :root {
-  /* surfaces */
-  --bg:        #0a0b0d;
-  --surface:   #111318;
-  --surface-2: #171a21;
-  --border:    #23262f;
-  --border-2:  #30343f;
+  --bg:        #f7f7f5;
+  --surface:   #ffffff;
+  --surface-2: #f2f2ef;
+  --border:    #e3e3de;
+  --border-2:  #cfcfc8;
 
-  /* text */
-  --text:      #e9ecf1;
-  --text-dim:  #99a1b0;
-  --text-faint:#646c7a;
+  --text:      #1c1c1a;
+  --text-dim:  #52524c;
+  --text-faint:#8b8b84;
 
-  /* actors: who made this call */
-  --jev:       #2dd4a7;   /* the decision model */
-  --jev-soft:  rgba(45, 212, 167, 0.14);
-  --claude:    #d97757;   /* the language model */
-  --claude-soft: rgba(217, 119, 87, 0.14);
-  --fallback:  #7c8496;   /* declared default was taken */
-  --fallback-soft: rgba(124, 132, 150, 0.14);
-  --modal:     #7c6cff;   /* compute */
-  --modal-soft: rgba(124, 108, 255, 0.14);
+  /* who made the call */
+  --jev:       #2f6fb3;
+  --jev-soft:  rgba(47, 111, 179, 0.12);
+  --claude:    #b4552f;
+  --claude-soft: rgba(180, 85, 47, 0.10);
+  --fallback:  #7a7a73;
+  --fallback-soft: rgba(122, 122, 115, 0.14);
 
   /* status */
-  --ok:        #2dd4a7;
-  --warn:      #e3b341;
-  --err:       #f0736a;
+  --ok:   #2e7d4f;
+  --warn: #b7791f;
+  --err:  #b3261e;
 
-  /* categorical series for plots (colour-blind-safe ordering) */
-  --c1: #4c8dff; --c2: #2dd4a7; --c3: #e3b341; --c4: #d97757;
-  --c5: #b98cff; --c6: #4ecde6; --c7: #f0736a; --c8: #8ed081;
-  --c9: #d4a0c8; --c10:#7c8496;
+  /* plot ink */
+  --ink:       #3b6ea8;   /* single-series marks */
+  --threshold: #c0392b;   /* cut-off lines drawn by a decision */
+  --grid:      #ececE8;
 
-  /* type */
-  --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font: -apple-system, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-  /* geometry */
-  --r-sm: 6px; --r: 10px; --r-lg: 14px;
-  --gap: 16px;
-  --rail: 248px;
-  --maxw: 1240px;
+  --r-sm: 4px; --r: 6px;
+  --gap: 20px;
+  --rail: 232px;
+  --maxw: 1280px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #141414;
+    --surface:   #1b1b1b;
+    --surface-2: #222222;
+    --border:    #2e2e2e;
+    --border-2:  #3d3d3d;
+
+    --text:      #e8e8e6;
+    --text-dim:  #aaaaa4;
+    --text-faint:#76766f;
+
+    --jev:       #6fa3dc;
+    --jev-soft:  rgba(111, 163, 220, 0.16);
+    --claude:    #e08a64;
+    --claude-soft: rgba(224, 138, 100, 0.14);
+    --fallback:  #8e8e87;
+    --fallback-soft: rgba(142, 142, 135, 0.16);
+
+    --ok:   #5fb987;
+    --warn: #d9a441;
+    --err:  #e0625a;
+
+    --ink:       #6fa3dc;
+    --threshold: #e0625a;
+    --grid:      #262626;
+  }
 }

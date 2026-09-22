@@ -1,58 +1,47 @@
-/* The control bar: pick a dataset, press Run, watch it go.
+/* The run bar: pick a dataset, press Run, see the status.
  *
- * It owns nothing but its own DOM. Which backend to call, what to do with each
- * event and what is on screen are all the caller's; this renders the controls
- * and reports intent. */
+ * It owns nothing but its own DOM; the caller decides what each action does. */
 
-import { chip, h } from "./dom.js";
+import { h } from "./dom.js";
 
 export function renderRunner(root, {
   api, datasets, status, running, dataset, onDataset, onRun, onStop, onApi,
 }) {
-  const picker = h("select", {
-    class: "control",
-    disabled: running || !datasets.length,
-    onChange: (e) => onDataset(e.target.value),
-    "aria-label": "dataset",
-  },
-    datasets.length
-      ? datasets.map((d) => h("option", { value: d.name, selected: d.name === dataset },
-                              d.name))
-      : h("option", { value: "" }, "no backend connected"),
-  );
-
   const chosen = datasets.find((d) => d.name === dataset);
 
-  const bar = h("div", { class: "runner" },
-    h("div", { class: "runner-row" },
-      h("span", { class: "runner-label", text: "dataset" }),
-      picker,
-      running
-        ? h("button", { class: "control danger", onClick: onStop }, "Stop watching")
-        : h("button", { class: "control primary", disabled: !api || !dataset,
-                        onClick: onRun }, "Run pipeline"),
-      h("span", { class: "spacer", style: "margin-left:auto" }),
-      statusChip(status, api),
-      h("button", { class: "chip", onClick: onApi, title: "change the backend URL" },
-        api ? shorten(api) : "connect a backend"),
+  root.replaceChildren(h("div", { class: "runner" },
+    h("label", { for: "dataset", text: "Dataset" }),
+    h("select", {
+      id: "dataset", class: "control",
+      disabled: running || !datasets.length,
+      onChange: (e) => onDataset(e.target.value),
+    },
+      datasets.length
+        ? datasets.map((d) => h("option", { value: d.name, selected: d.name === dataset }, d.name))
+        : h("option", { value: "" }, "no backend"),
     ),
-    chosen?.blurb ? h("div", { class: "runner-blurb", text: chosen.blurb }) : null,
-    !api ? h("div", { class: "runner-blurb", text:
-      "Nothing is running yet — this is a replay of a saved run. Point the page " +
-      "at a backend to run the pipeline for real: locally with " +
-      "`uvicorn scrnapipeline.server:app --port 8000`, or at the deployed Modal " +
-      "URL." }) : null,
-  );
-
-  root.replaceChildren(bar);
+    running
+      ? h("button", { class: "control", onClick: onStop }, "Stop watching")
+      : h("button", { class: "control primary", disabled: !api || !dataset, onClick: onRun }, "Run"),
+    statusLine(status, api),
+    h("button", { class: "linklike", onClick: onApi, title: "change the backend URL" },
+      api ? (api === "." ? "this server" : shorten(api)) : "connect a backend"),
+    chosen?.blurb ? h("div", { class: "blurb", text: chosen.blurb }) : null,
+    !api ? h("div", { class: "blurb", text:
+      "No backend is connected, so this is a saved run. To run the pipeline, start " +
+      "`uvicorn scrnapipeline.server:app --port 8000` and connect to it." }) : null,
+  ));
 }
 
-function statusChip(status, api) {
-  if (!api) return chip("replay", "fallback");
-  if (!status) return chip("checking…", "fallback");
-  if (status.error) return chip(status.error, "fallback");
-  if (status.running) return chip(status.text ?? "running", "modal");
-  return chip(status.text ?? "ready", "jev");
+function statusLine(status, api) {
+  let cls = "", text = "saved run";
+  if (api) {
+    if (!status) { text = "connecting…"; }
+    else if (status.error) { cls = "err"; text = status.error; }
+    else if (status.running) { cls = "busy"; text = status.text ?? "running"; }
+    else { cls = "ok"; text = status.text ?? "ready"; }
+  }
+  return h("span", { class: `status ${cls}`.trim() }, h("span", { class: "dot" }), text);
 }
 
 function shorten(api) {

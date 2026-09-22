@@ -54,10 +54,10 @@ class IntegrateStep(Step):
             return adata, {"applied": "none", "batch_key": batch_key}
 
         method = choices.get("method", "harmony")
+        batch_key, pooled = _pool_small_batches(adata, batch_key)
         try:
             if method == "harmony":
-                sc.external.pp.harmony_integrate(adata, key=batch_key)
-                adata.obsm["X_emb"] = adata.obsm["X_pca_harmony"]
+                adata.obsm["X_emb"] = _harmony(adata, batch_key)
             elif method == "bbknn":
                 sc.external.pp.bbknn(adata, batch_key=batch_key)
                 adata.obsm["X_emb"] = adata.obsm["X_pca"]
@@ -68,11 +68,53 @@ class IntegrateStep(Step):
             return adata, {
                 "applied": "none",
                 "batch_key": batch_key,
-                "reason": f"{method} unavailable: {exc.__class__.__name__}",
+                "reason": f"{method} unavailable: {exc.__class__.__name__}: {exc}"[:240],
             }
 
         state.observe(integration=method, batch_key=batch_key)
-        return adata, {"applied": method, "batch_key": batch_key}
+        return adata, {"applied": method, "batch_key": batch_key,
+                       "pooled_small_batches": pooled}
+
+
+def _harmony(adata: Any, batch_key: str):
+    """Harmony on the PCA embedding, whichever way round harmonypy returns it.
+
+    scanpy's wrapper transposes `Z_corr`, which was PCs x cells before
+    harmonypy 2.0 and is cells x PCs from it on. With 2.x the wrapper raises a
+    shape ValueError AFTER harmony has converged, and this step's fallback then
+    reported "harmony unavailable" on every multi-batch run.
+    """
+    import harmonypy
+
+    pcs = adata.obsm["X_pca"]
+    corrected = harmonypy.run_harmony(pcs, adata.obs, [batch_key],
+                                      verbose=False).Z_corr
+    corrected = getattr(corrected, "to_numpy", lambda: corrected)()
+    return corrected if corrected.shape == pcs.shape else corrected.T
+
+
+MIN_BATCH_CELLS = 10
+
+
+def _pool_small_batches(adata: Any, batch_key: str) -> tuple[str, int]:
+    """Fold batches too small to correct into one shared level.
+
+    A study that contributes one or two cells is not a batch any method can
+    estimate an effect for, and bbknn refuses outright: the scTab blood subset
+    has studies of 8, 2 and 1 cells against its 3-per-batch neighbour count.
+    Returns the key to integrate on and how many batches were pooled.
+    """
+    counts = adata.obs[batch_key].astype(str).value_counts()
+    small = counts.index[counts < MIN_BATCH_CELLS]
+    if len(small) == 0:
+        return batch_key, 0
+    # If the pooled bucket is itself too small, it joins the largest batch.
+    bucket = ("pooled_small_batches" if counts[small].sum() >= MIN_BATCH_CELLS
+              else counts.index[0])
+    pooled = adata.obs[batch_key].astype(str).where(
+        ~adata.obs[batch_key].astype(str).isin(small), bucket)
+    adata.obs["batch_integrated"] = pooled.astype("category")
+    return "batch_integrated", int(len(small))
 
 
 def _batch_key(adata: Any) -> str | None:

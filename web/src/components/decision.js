@@ -1,89 +1,112 @@
-/* A decision card: the question, the options Jev had, the probability on each,
- * and how the confidence sat against the floor.
+/* One decision: the question, the options with Jev's probability on each, and a
+ * sentence saying what was used and why.
  *
- * This is the part of the demo that is the point. Everything here is read off
- * the run record - the card never infers a probability that was not returned. */
+ * Everything is read off the run record. The card never infers a probability
+ * that was not returned. */
 
-import { h, chip, sectionLabel } from "./dom.js";
-
-const KIND_LABEL = { choice: "Choice", noul: "Noul", score: "Score" };
+import { QUESTIONS } from "../steps/spec.js";
+import { fmt, h } from "./dom.js";
 
 export function renderDecision(decision) {
   const options = decision.options();
-  const hasProbabilities = options.some((o) => Number.isFinite(o.probability));
+  const id = `${decision.step}.${decision.question}`;
 
   return h("div", { class: "decision" },
     h("div", { class: "decision-head" },
-      h("span", { class: "decision-q", text: decision.question }),
-      h("span", { class: "decision-type", text: KIND_LABEL[decision.kind] ?? decision.kind }),
-      h("span", { class: "spacer", style: "margin-left:auto" }),
-      decision.fellBack()
-        ? chip("default taken", "fallback")
-        : chip("answered by Jev", "jev"),
-      decision.framed ? chip("framed by Claude", "claude") : null,
+      h("span", { class: "decision-q", text: QUESTIONS[id] ?? decision.question }),
+      h("span", { class: "decision-id", text: id }),
     ),
-
-    decision.instructions
-      ? h("div", { class: `decision-instr ${decision.framed ? "framed" : ""}`,
-                   text: decision.instructions })
-      : null,
-
-    sectionLabel(hasProbabilities
-      ? "options, with the probability Jev put on each"
-      : "options Jev was given"),
-    h("div", { class: "options" }, options.map((o) => renderOption(o, decision))),
-
+    h("div", { class: "decision-verdict" }, ...verdict(decision)),
+    h("table", { class: "opts" },
+      h("tbody", {}, options.map((o) => renderOption(o, decision)))),
     renderConfidence(decision),
-    decision.note ? h("div", { class: "note", text: decision.note }) : null,
+    decision.instructions
+      ? h("details", { class: "decision-context" },
+          h("summary", {}, decision.framed ? "How Claude put the question to Jev" : "The question as asked"),
+          h("p", { text: decision.instructions }))
+      : null,
   );
+}
+
+/** "Used X. Jev's confidence 0.93, above the 0.55 floor." as inline nodes. */
+function verdict(d) {
+  const used = display(d, d.value);
+  const floor = d.floor.toFixed(2);
+  if (d.source === "jev") {
+    return ["Used ", h("b", { text: used }), `. Jev's confidence ${d.confidence?.toFixed(2) ?? "?"}` +
+      `, above the ${floor} floor.`];
+  }
+  if (d.confidence === null) {
+    return ["Used the default, ", h("b", { text: used }), ". No answer came back from Jev."];
+  }
+  const leaned = jevPick(d);
+  return [
+    "Used the default, ", h("b", { text: used }), ". ",
+    leaned !== null && String(leaned) !== String(d.value)
+      ? `Jev leaned towards ${display(d, leaned)}, but its confidence was `
+      : "Jev's confidence was ",
+    `${d.confidence.toFixed(2)}, below the ${floor} floor.`,
+  ];
+}
+
+/** The value Jev itself would have picked, or null when that is not recorded. */
+function jevPick(d) {
+  const raw = d.raw.raw ?? {};
+  if (d.kind === "choice" && raw.choice !== undefined) return raw.choice;
+  if (d.kind === "noul" && Number.isFinite(raw.noul)) {
+    return raw.noul >= (d.raw.threshold ?? 0.5);
+  }
+  const probs = raw.probabilities;
+  if (d.kind === "score" && probs && Array.isArray(d.raw.values)) {
+    const best = Object.entries(probs).sort((a, b) => b[1] - a[1])[0];
+    return best ? d.raw.values[Number(best[0])] : null;
+  }
+  return null;
 }
 
 function renderOption(option, decision) {
-  const picked = option.picked;
   const p = Number.isFinite(option.probability) ? option.probability : null;
-
-  const classes = ["option"];
-  if (picked) classes.push(decision.fellBack() ? "picked-default" : "picked");
+  const classes = [];
+  if (option.picked) classes.push("picked");
+  if (option.picked && decision.fellBack()) classes.push("default");
   if (!option.offered) classes.push("dropped");
 
-  return h("div", { class: classes.join(" ") },
-    h("span", { class: "fill", style: `width:${p !== null ? p * 100 : 0}%` }),
-    h("span", { class: "option-key", text: labelFor(option, decision) }),
-    h("span", { class: "option-p",
-                text: option.offered ? (p !== null ? `${(p * 100).toFixed(1)}%` : "—")
-                                     : "dropped in framing" }),
-    option.description ? h("span", { class: "option-desc", text: option.description }) : null,
+  const value = decision.kind === "score" && Array.isArray(decision.raw.values)
+    ? decision.raw.values[Number(option.key)] ?? option.key
+    : option.key;
+
+  return h("tr", { class: classes.join(" ") },
+    h("td", { class: "mark", text: option.picked ? "✓" : "" }),
+    h("td", { class: "key", text: display(decision, value) }),
+    h("td", { class: "bar" },
+      h("div", { class: "pbar" }, h("i", { style: `width:${p !== null ? p * 100 : 0}%` }))),
+    h("td", { class: "p", text: !option.offered ? "removed" : p !== null ? `${Math.round(p * 100)}%` : "" }),
+    h("td", { class: "desc", text: tidy(option.description) }),
   );
 }
 
-function labelFor(option, decision) {
-  if (decision.kind === "score" && Array.isArray(decision.raw.values)) {
-    const v = decision.raw.values[Number(option.key)];
-    return v === undefined ? option.key : `${option.key} → ${v}`;
-  }
-  return option.key;
-}
-
-/** Confidence against the floor, drawn as one track with a floor marker. */
-function renderConfidence(decision) {
-  if (decision.confidence === null) {
-    return h("div", { class: "conf-legend" },
-      h("span", { text: "no confidence returned" }),
-      h("span", { text: `floor ${decision.floor.toFixed(2)}` }),
-    );
-  }
-  const pct = Math.max(0, Math.min(1, decision.confidence)) * 100;
+/** Confidence against the floor: one short track with the floor marked. */
+function renderConfidence(d) {
+  if (d.confidence === null) return null;
+  const pct = Math.max(0, Math.min(1, d.confidence)) * 100;
   return h("div", { class: "conf" },
-    h("div", { class: "conf-track" },
-      h("span", { class: `conf-bar ${decision.belowFloor() ? "below" : ""}`.trim(),
-                  style: `width:${pct}%` }),
-      h("span", { class: "conf-floor", style: `left:${decision.floor * 100}%` }),
+    h("span", { text: "confidence" }),
+    h("span", { class: "conf-track", title: `floor ${d.floor.toFixed(2)}` },
+      h("span", { class: `conf-bar ${d.belowFloor() ? "below" : ""}`.trim(), style: `width:${pct}%` }),
+      h("span", { class: "conf-floor", style: `left:${d.floor * 100}%` }),
     ),
-    h("div", { class: "conf-legend" },
-      h("span", { text: `confidence ${decision.confidence.toFixed(2)}` }),
-      h("span", { text: decision.belowFloor()
-        ? `below floor ${decision.floor.toFixed(2)} → declared default used`
-        : `above floor ${decision.floor.toFixed(2)} → answer used` }),
-    ),
+    h("span", { class: "mono", text: `${d.confidence.toFixed(2)} ${d.belowFloor() ? "<" : "≥"} floor ${d.floor.toFixed(2)}` }),
   );
+}
+
+function display(d, value) {
+  if (d.kind === "noul" || typeof value === "boolean") {
+    return String(value) === "true" ? "yes" : "no";
+  }
+  return fmt(value);
+}
+
+/** "Standard - a typical tissue" reads better as "Standard: a typical tissue". */
+function tidy(text) {
+  return (text ?? "").replace(/^(\w+) - /, "$1: ");
 }

@@ -19,8 +19,13 @@ export function h(tag, attrs = {}, ...children) {
 }
 
 export function chip(text, variant) {
-  return h("span", { class: `chip ${variant ?? ""}`.trim() },
-    variant && variant !== "mono" ? h("span", { class: "dot" }) : null, text);
+  return h("span", { class: `tag ${variant ?? ""}`.trim(), text });
+}
+
+/** A step's one-line outcome, read from its own summary. "" when unknown. */
+export function stepResult(spec, summary, form = "result") {
+  if (!summary || !spec?.[form]) return "";
+  try { return spec[form](summary) ?? ""; } catch { return ""; }
 }
 
 export function sectionLabel(text) {
@@ -37,6 +42,6 @@ export function fmt(value) {
   if (typeof value === "number") {
     return Number.isInteger(value) ? value.toLocaleString() : String(value);
   }
-  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "boolean") return value ? "yes" : "no";
   return String(value);
 }

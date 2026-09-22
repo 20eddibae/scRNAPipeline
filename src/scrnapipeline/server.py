@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .registry import DEFAULT_ORDER
-from .steps.load import DATASETS
+from .steps.load import DATASETS, FILE_SUBSETS, _resolve_file_dataset
 
 DATASET_BLURB = {
     "pbmc3k": "2 700 human PBMCs, raw counts. Author labels grafted by barcode "
@@ -42,7 +42,26 @@ DATASET_BLURB = {
                         "carrying the author's louvain labels.",
     "pbmc68k_reduced": "700 PBMCs in a pre-reduced space, with bulk-sorted "
                        "labels. Small and fast.",
+    **{name: spec[3] for name, spec in FILE_SUBSETS.items()},
 }
+
+
+def _live_datasets() -> dict[str, str | None]:
+    """Builtins, plus each file subset whose parent file is actually present.
+
+    Only subsets are offered, not whole file datasets: the full scTab exports
+    are 22k-cell multi-tissue matrices (the training one is 3 GB) and do not
+    belong behind a button on a memory-capped host.
+    """
+    live = {name: label_key for name, (_loader, label_key) in DATASETS.items()}
+    for name, (parent, *_rest) in FILE_SUBSETS.items():
+        try:
+            _resolve_file_dataset(parent)
+        except FileNotFoundError:
+            continue
+        live[name] = "cell_type"
+    return live
+
 
 def _allowed_origins() -> list[str]:
     """Which sites may call this. `DEMO_ORIGINS` is a comma-separated list;
@@ -72,7 +91,7 @@ def datasets() -> dict[str, Any]:
         "datasets": [
             {"name": name, "label_key": label_key,
              "blurb": DATASET_BLURB.get(name, "")}
-            for name, (_loader, label_key) in DATASETS.items()
+            for name, label_key in _live_datasets().items()
         ]
     }
 
@@ -85,7 +104,7 @@ def run(
 ) -> StreamingResponse:
     """Stream one run as it happens."""
     _authorise(token)
-    if dataset not in DATASETS:
+    if dataset not in _live_datasets():
         raise HTTPException(400, f"unknown dataset {dataset!r}")
 
     return StreamingResponse(

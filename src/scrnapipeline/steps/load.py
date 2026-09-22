@@ -49,6 +49,22 @@ FILE_DATASETS: dict[str, tuple[str, str]] = {
 }
 
 
+# Named row subsets of a file dataset: (parent, obs column, value, blurb).
+#
+# The blood subset is the one the annotation comparison needs. The full split
+# spans 55 tissues and 164 types, which no PBMC vocabulary can name; its blood
+# rows are PBMC-like, and their labels were assigned by the authors of 25
+# independent CELLxGENE studies -- not by reading this run's markers, which is
+# what pbmc3k's labels were.
+FILE_SUBSETS: dict[str, tuple[str, str, str, str]] = {
+    "sctab_val_blood": (
+        "sctab_val_raw", "tissue_general", "blood",
+        "The blood rows of the scTab validation split: raw counts, 25 studies, "
+        "author-assigned CELLxGENE labels independent of any marker list.",
+    ),
+}
+
+
 def _resolve_file_dataset(name: str) -> Path:
     filename = FILE_DATASETS[name][0]
     roots = [Path(os.environ["SCRNA_DATA_DIR"])] if os.environ.get("SCRNA_DATA_DIR") else []
@@ -71,7 +87,17 @@ class LoadStep(Step):
         self, adata: Any, state: RunState, choices: dict[str, Any]
     ) -> tuple[Any, dict[str, Any]]:
         spec = state.dataset
-        if spec in FILE_DATASETS:
+        if spec in FILE_SUBSETS:
+            parent, column, value, _ = FILE_SUBSETS[spec]
+            path = _resolve_file_dataset(parent)
+            # Backed read, so only the kept rows are ever brought into memory.
+            backed = sc.read_h5ad(path, backed="r")
+            rows = (backed.obs[column].astype(str) == value).to_numpy()
+            adata = backed[rows].to_memory()
+            backed.file.close()
+            state.observe(subset=f"{column} == {value}")
+            adata, label_key = _prepare_h5ad(adata, state)
+        elif spec in FILE_DATASETS:
             path = _resolve_file_dataset(spec)
             if path.stat().st_size < 1024:
                 raise ValueError(f"{path} looks empty -- still being written?")
@@ -91,11 +117,24 @@ class LoadStep(Step):
         else:
             raise ValueError(
                 f"unknown dataset {spec!r}; use one of "
-                f"{sorted(list(DATASETS) + list(FILE_DATASETS))}, h5ad:<path> or "
+                f"{sorted(list(DATASETS) + list(FILE_DATASETS) + list(FILE_SUBSETS))}, "
+                "h5ad:<path> or "
                 "merlin:<dir>"
             )
 
         adata.var_names_make_unique()
+
+        # `annotate` writes its predictions to obs["cell_type"]. CELLxGENE and
+        # scTab keep their GROUND TRUTH in a column of that exact name, so left
+        # there the truth is overwritten by the predictions before `evaluate`
+        # reads it -- and the run scores itself: ARI 1.0, accuracy 1.0, measured
+        # on the first scTab run. The truth moves to a column nothing writes.
+        if label_key and label_key != "ground_truth":
+            adata.obs["ground_truth"] = adata.obs[label_key].astype(str).where(
+                adata.obs[label_key].notna())
+            if label_key == "cell_type":
+                del adata.obs["cell_type"]
+            label_key = "ground_truth"
 
         # A store that is already size-factor + log1p normalised has no counts to
         # keep, and the steps that assume counts must know that rather than run
@@ -217,6 +256,7 @@ def _prepare_h5ad(adata: Any, state: RunState):
     step, and normalising it again is wrong in a way nothing raises about.
     """
     label_key = state.obs.get("label_key") or _detect_label_key(adata)
+    _attach_sctab_gene_names(adata, state)
     pre_normalized = not _looks_like_counts(adata)
     state.observe(pre_normalized=pre_normalized,
                   sctab_feature_space=_looks_like_sctab_space(adata))
@@ -230,13 +270,37 @@ def _prepare_h5ad(adata: Any, state: RunState):
         adata = adata[np.sort(keep)].copy()
         state.observe(subsampled_to=max_cells)
 
+    # A batch key with a level every few cells is not a batch structure any
+    # integration method can use: the scTab blood rows carry 2,106 donors over
+    # 8,483 cells, so the study (dataset_id) is the batch there.
     if "batch" not in adata.obs:
         for key in ("tech_sample", "sample", "donor_id", "dataset_id", "batch_id"):
-            if key in adata.obs and adata.obs[key].nunique() > 1:
+            if key in adata.obs and 1 < adata.obs[key].nunique() <= adata.n_obs / 50:
                 adata.obs["batch"] = adata.obs[key].astype(str)
                 break
 
     return adata, label_key
+
+
+def _attach_sctab_gene_names(adata: Any, state: RunState) -> None:
+    """The scTab h5ad exports ship an EMPTY var: genes are named '0'..'19330'.
+
+    Every marker list, the CellTypist gene match and every prompt would then be
+    integers -- nothing raises, and every label is noise. The names come from
+    the Merlin store's var.parquet, whose index is those same integers; the
+    column order was checked against biology (B cells -> CD79A/MS4A1,
+    monocytes -> S100A8/LYZ, NK -> NKG7/GNLY, neurons -> SYT1/NRXN1).
+    """
+    if adata.n_vars != 19331 or not all(str(v).isdigit() for v in adata.var_names[:50]):
+        return
+    import pandas as pd
+
+    table = pd.read_csv(Path(__file__).resolve().parent.parent / "resources"
+                        / "sctab_features.csv")
+    order = adata.var_names.astype(int).to_numpy()
+    adata.var["feature_id"] = table["feature_id"].to_numpy()[order]
+    adata.var_names = table["feature_name"].astype(str).to_numpy()[order]
+    state.observe(gene_names="attached from scTab var.parquet (export had none)")
 
 
 def _detect_label_key(adata: Any) -> str | None:

@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run", help="run the pipeline")
     run.add_argument("--dataset", default="pbmc3k",
-                     help="pbmc3k | pbmc3k_processed | pbmc68k_reduced | sctab_val_raw | sctab_train_preprocessed | h5ad:<path> | merlin:<dir>")
+                     help="pbmc3k | pbmc3k_processed | pbmc68k_reduced | sctab_val_raw | sctab_val_blood | sctab_train_preprocessed | h5ad:<path> | merlin:<dir>")
     run.add_argument("--mode", choices=("scripted", "agent"), default="scripted")
     run.add_argument("--context", default="human PBMC",
                      help="tissue context given to the annotator")
@@ -36,12 +36,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "datasets":
-        from .steps.load import DATASETS, FILE_DATASETS
+        from .steps.load import DATASETS, FILE_DATASETS, FILE_SUBSETS
 
         for name in sorted(DATASETS):
             print(f"  {name:28s} scanpy builtin")
         for name, (filename, note) in sorted(FILE_DATASETS.items()):
             print(f"  {name:28s} {filename} -- {note}")
+        for name, (parent, column, value, note) in sorted(FILE_SUBSETS.items()):
+            print(f"  {name:28s} {parent} where {column} == {value} -- {note}")
         print(f"  {'h5ad:<path>':28s} any AnnData file; label column autodetected")
         print(f"  {'merlin:<dir>':28s} an unpacked scTab Merlin parquet store")
         return 0

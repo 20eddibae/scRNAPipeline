@@ -1,52 +1,40 @@
-/* The left rail: all eight steps at once, which ran, and who decided inside. */
+/* The step list: every step, whether it ran, and what it produced.
+ * The line under each name is read from that step's own summary, so the list
+ * reads top to bottom as what happened to the data. */
 
 import { OVERVIEW } from "../steps/spec.js";
-import { h } from "./dom.js";
+import { h, stepResult } from "./dom.js";
 
-const WHO = { jev: "Jev decides", claude: "Claude reads", neither: "no decision point" };
+const MARK = { ok: "✓", error: "✗", pending: "○", skipped: "–" };
 
 export function renderStepper(root, run, { active, running, onSelect }) {
   const overview = h("button", {
-    class: "rail-item",
+    class: "rail-item done",
     "aria-current": active === OVERVIEW,
     onClick: () => onSelect(OVERVIEW),
-    style: "margin-bottom:6px",
   },
-    h("span", { class: "rail-num", text: "◎" }),
-    h("span", {},
-      h("span", { class: "rail-name", text: "overview" }),
-      h("span", { class: "rail-who", style: "display:block",
-                  text: "the whole run on one screen" }),
-    ),
+    h("span", { class: "rail-mark", text: "≡" }),
+    h("span", {}, h("span", { class: "rail-name", text: "Summary" })),
   );
 
   const list = h("ol", { class: "rail-list" });
-
   run.timeline().forEach((entry, i) => {
-    const { spec, status, decisions } = entry;
+    const { spec, status, record } = entry;
     const live = spec.name === running;
-    const item = h("button", {
-      class: `rail-item ${status === "ok" ? "done" : status}${live ? " active" : ""}`,
+    const state = live ? "active" : status === "ok" ? "done" : status;
+    list.appendChild(h("li", {}, h("button", {
+      class: `rail-item ${state}`,
       "aria-current": spec.name === active,
       onClick: () => onSelect(spec.name),
     },
-      h("span", { class: "rail-num", text: String(i + 1) }),
+      h("span", { class: "rail-mark", text: live ? "●" : MARK[status] ?? "○" }),
       h("span", {},
-        h("span", { class: "rail-name", text: spec.name }),
-        h("span", { class: "rail-who", style: "display:block",
-          text: live
-            ? "running…"
-            : status === "pending"
-              ? ""
-              : decisions.length
-              ? `${decisions.length} decision${decisions.length > 1 ? "s" : ""} · ${WHO[spec.decidedBy]}`
-              : WHO[spec.decidedBy] }),
+        h("span", { class: "rail-name", text: `${i + 1}. ${spec.title}` }),
+        h("span", { class: "rail-who", text: live ? "running…"
+          : status === "pending" ? "" : stepResult(spec, record?.summary, "brief") }),
       ),
-    );
-    list.appendChild(h("li", {}, item));
+    )));
   });
 
-  root.replaceChildren(
-    h("div", { class: "rail-title", text: "pipeline" }), overview, list,
-  );
+  root.replaceChildren(overview, h("div", { class: "rail-sep" }), list);
 }

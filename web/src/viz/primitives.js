@@ -5,9 +5,13 @@
 
 const NS = "http://www.w3.org/2000/svg";
 
+// scanpy's default_20 (tab10, then the rest of tab20): the colours a
+// practitioner already associates with a Leiden UMAP.
 export const PALETTE = [
-  "#4c8dff", "#2dd4a7", "#e3b341", "#d97757", "#b98cff",
-  "#4ecde6", "#f0736a", "#8ed081", "#d4a0c8", "#7c8496",
+  "#1f77b4", "#ff7f0e", "#279e68", "#d62728", "#aa40fc",
+  "#8c564b", "#e377c2", "#b5bd61", "#17becf", "#aec7e8",
+  "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94",
+  "#f7b6d2", "#dbdb8d", "#9edae5", "#ad494a", "#8c6d31",
 ];
 
 export function colorFor(i) {
@@ -116,12 +120,13 @@ export function format(v) {
 export function legend(items) {
   const wrap = document.createElement("div");
   wrap.className = "viz-legend";
-  for (const { label, color } of items) {
+  for (const { label, color, line } of items) {
     const item = document.createElement("span");
     item.className = "item";
     const sw = document.createElement("span");
-    sw.className = "swatch";
-    sw.style.background = color;
+    sw.className = line ? "swatch line" : "swatch";
+    if (line) sw.style.borderColor = color;
+    else sw.style.background = color;
     item.append(sw, document.createTextNode(label));
     wrap.appendChild(item);
   }
