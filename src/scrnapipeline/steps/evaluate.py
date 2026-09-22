@@ -96,8 +96,14 @@ def _score_annotation(predicted: np.ndarray, truth: np.ndarray) -> dict[str, Any
     predicted = np.asarray(predicted).astype(str)
     truth = np.asarray(truth).astype(str)
     exact = float((predicted == truth).mean())
-    loose = float((np.array([_norm(p) for p in predicted])
-                   == np.array([_norm(t) for t in truth])).mean())
+
+    # Both diagnostics below read the folded strings. Macro-F1 over the raw
+    # ones was reporting 0.0 for the same reason exact-match did -- with no
+    # vocabulary in common, every class has zero support in the other set, so
+    # it scored spelling rather than assignment.
+    pred_norm = np.array([_norm(p) for p in predicted])
+    truth_norm = np.array([_norm(t) for t in truth])
+    loose = float((pred_norm == truth_norm).mean())
     return {
         # The headline: right cells grouped under a consistent name, whatever
         # that name is.
@@ -106,7 +112,7 @@ def _score_annotation(predicted: np.ndarray, truth: np.ndarray) -> dict[str, Any
         # perfect annotator using a different label set scores near zero here.
         "annotation_exact_accuracy": round(exact, 4),
         "annotation_normalised_accuracy": round(loose, 4),
-        "annotation_macro_f1": round(float(f1_score(truth, predicted,
+        "annotation_macro_f1": round(float(f1_score(truth_norm, pred_norm,
                                                     average="macro",
                                                     zero_division=0)), 4),
         "annotation_n_predicted_types": int(len(set(predicted))),
@@ -141,8 +147,40 @@ def _matched_accuracy(predicted: np.ndarray, truth: np.ndarray) -> float:
 
 
 def _norm(label: str) -> str:
-    """Fold the trivial vocabulary differences between label sets."""
+    """Fold *orthographic* differences between label sets. Only those.
+
+    The previous version folded punctuation but not number, which meant not one
+    of pbmc3k's 2,638 cells matched: "B cell" against "B cells" is a plural,
+    and a plural was enough to score a correct call as wrong. The three folds
+    that matter in practice:
+
+        "B cells"          -> "b cell"        plural
+        "CD4+ T cell"      -> "cd4 t cell"    marker suffix, so "CD4+" and
+                                              "CD4" are one claim, not two
+        "CD14-positive"    -> "cd14"          spelled-out marker polarity
+
+    What this deliberately does NOT do is fold synonyms. "CD16+ Monocyte" and
+    "FCGR3A+ Monocytes" are the same cells under two naming conventions, and
+    "Platelet" and "Megakaryocyte" are one lineage; folding either here would
+    turn a vocabulary metric into a biology metric and hide the difference
+    between an annotator that was right and one that was lucky. Naming
+    convention is what `annotation_matched_accuracy` exists to factor out, by
+    solving the assignment problem rather than by guessing at a thesaurus.
+
+    A negative marker keeps its sign: "CD14-" does not fold to "cd14", because
+    that is the opposite claim.
+    """
     text = label.lower().strip()
-    for old, new in (("-positive", "+"), ("-negative", "-"), ("_", " ")):
-        text = text.replace(old, new)
-    return " ".join(text.replace(",", " ").split())
+    text = text.replace("-positive", "+").replace("-negative", "-")
+    text = text.replace("_", " ").replace(",", " ").replace("/", " / ")
+    text = text.replace("+", "")
+    return " ".join(_singular(word) for word in text.split())
+
+
+def _singular(word: str) -> str:
+    """Crude plural fold. Applied to both label sets, so a stem it mangles
+    ("langerhans" -> "langerhan") still matches its own mangling; the only cost
+    of getting one wrong is an ugly string, not a wrong count."""
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word

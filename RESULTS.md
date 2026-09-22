@@ -67,6 +67,49 @@ and only one of them comes from the decision model.
 
 ---
 
+## Experiment 1b: was the resolution ballot in the right place?
+
+Experiment 1 found `0.4` beating Jev's `1.0` and flagged two limits: ARI may
+simply prefer fewer clusters, and n = 1 dataset. Both are addressed here by
+sweeping a finer grid on two datasets and reporting NMI alongside ARI.
+`experiments/resolution_sweep.py`, everything upstream of `cluster` computed once
+per dataset.
+
+| resolution | pbmc3k clusters | pbmc3k ARI | pbmc3k NMI | 68k clusters | 68k ARI | 68k NMI |
+|---|---|---|---|---|---|---|
+| 0.4 | 6 | 0.8271 | 0.8237 | 6 | 0.4334 | 0.6201 |
+| 0.6 | 7 | 0.8286 | 0.8245 | 7 | 0.4370 | 0.6357 |
+| **0.8** | 8 | **0.8704** | **0.8513** | 8 | **0.5010** | **0.6610** |
+| 1.0 | 9 | 0.6679 | 0.7847 | 10 | 0.4110 | 0.6296 |
+| 1.2 | 10 | 0.6215 | 0.7774 | 11 | 0.3809 | 0.6156 |
+| 1.6 | 14 | 0.4016 | 0.6840 | 12 | 0.3846 | 0.6040 |
+| 2.0 | 21 | 0.2925 | 0.6196 | 12 | 0.3807 | 0.6044 |
+
+pbmc3k ground truth is the author's `louvain` labels; `pbmc68k_reduced` uses
+`bulk_labels`, which come from bulk-sorted populations and are therefore not
+another pipeline's output.
+
+**The old ladder could not reach the best answer on either dataset.** Rungs were
+`0.4 / 1.0 / 1.6`; the optimum is `0.8` on both, on both metrics. Jev's pick of
+`1.0` on pbmc3k cost 0.20 ARI against a value it was never offered, and 0.16
+against the best value it was. Re-centred to `0.4 / 0.8 / 1.2`.
+
+**The "ARI just prefers fewer clusters" caveat does not survive.** On
+`pbmc68k_reduced` the truth has 10 types, and resolution 1.0 produces exactly 10
+clusters — and scores *worse* (0.4110) than the 8-cluster partition at 0.8
+(0.5010). Matching the true cluster count is not what ARI is rewarding here. NMI,
+which does not share ARI's preference, peaks at the same rung on both datasets.
+
+**What this does not establish.** Both datasets are PBMC, so this is two readings
+of one tissue, not two independent confirmations. The optimum is a property of
+the data and there is no reason 0.8 transfers to a tumour or a developmental
+series. The claim that holds is the weaker and more useful one: *the previous
+rungs were placed badly*, and a ballot that cannot contain the right answer caps
+every decision procedure that reads it — which is a limit on the option set, not
+on the decision model.
+
+---
+
 ## Experiment 2: per-cluster annotation and what abstention buys
 
 One Jev call per cluster over a fixed vocabulary. 8 of 9 clusters correct.

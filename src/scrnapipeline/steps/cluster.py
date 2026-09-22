@@ -1,4 +1,25 @@
-"""Step 6: kNN graph, Leiden clustering, UMAP."""
+"""Step 6: kNN graph, Leiden clustering, UMAP.
+
+The rungs were 0.4 / 1.0 / 1.6. A sweep on two datasets says that ladder sits
+too high: ARI peaks at 0.8 on both and falls away monotonically above it.
+
+    resolution   pbmc3k ARI   pbmc68k_reduced ARI
+      0.4          0.8271           0.4334
+      0.8          0.8704           0.5010
+      1.0          0.6679           0.4110
+      1.2          0.6209           0.3809
+      1.6          0.4016           0.3846
+
+So the old ladder could not reach the best answer on either dataset, and its
+middle rung - the default, and what Jev picked on pbmc3k at 0.83 confidence -
+cost about 0.20 ARI there. Re-centred on 0.4 / 0.8 / 1.2.
+
+Read that as provisional, not settled. Both datasets are PBMC, so this is two
+readings of one tissue rather than two independent confirmations, and the true
+optimum is a property of the data, not a constant. What the sweep does
+establish is that the previous rungs were placed badly, which is a different
+and safer claim than "0.8 is correct".
+"""
 
 from __future__ import annotations
 
@@ -26,11 +47,11 @@ class ClusterStep(Step):
                 ),
                 criteria=[
                     "Coarse - broad lineages only (resolution 0.4)",
-                    "Standard - the usual cell-type granularity (resolution 1.0)",
-                    "Fine - subtypes and states wanted (resolution 1.6)",
+                    "Standard - the usual cell-type granularity (resolution 0.8)",
+                    "Fine - subtypes and states wanted (resolution 1.2)",
                 ],
-                values=[0.4, 1.0, 1.6],
-                default=1.0,
+                values=[0.4, 0.8, 1.2],
+                default=0.8,
             )
         }
 

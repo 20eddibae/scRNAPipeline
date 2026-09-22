@@ -283,9 +283,8 @@ export function metricsPanel(run) {
     ["NMI", m.nmi, "shared information"],
     ["probe accuracy", m.probe_accuracy, "logistic probe on PCA"],
     ["probe macro F1", m.probe_macro_f1, "per-type, unweighted"],
-    ["label accuracy", m.annotation_normalised_accuracy,
-     "Claude's cell type vs. the author's, name-normalised"],
-    ["label macro F1", m.annotation_macro_f1, "per-type, unweighted"],
+    ["label accuracy", m.annotation_matched_accuracy,
+     "right cells, consistently named — naming convention factored out"],
   ].filter(([, v]) => Number.isFinite(v));
   if (!rows.length) return null;
 
@@ -315,10 +314,19 @@ export function annotationScores(run) {
 
   const node = document.createElement("div");
   node.className = "tiles";
+  // Ordered by how much each one tells you. `matched` asks the question that
+  // matters - were the right cells grouped and given *a* consistent name. The
+  // two below it compare label strings, so an annotator using a different
+  // vocabulary scores low on them while being entirely correct; they are
+  // reported because the gap between them and `matched` is itself the
+  // measurement of how far the two vocabularies are apart.
   const rows = [
-    ["exact", m.annotation_exact_accuracy, "string-identical to the author label"],
-    ["normalised", m.annotation_normalised_accuracy, "after name normalisation"],
-    ["macro F1", m.annotation_macro_f1, "per-type, unweighted"],
+    ["matched", m.annotation_matched_accuracy,
+     "best one-to-one map from predicted names to true ones"],
+    ["normalised", m.annotation_normalised_accuracy,
+     "same string after folding case, plurals and marker suffixes"],
+    ["exact", m.annotation_exact_accuracy, "string-identical, before any folding"],
+    ["macro F1", m.annotation_macro_f1, "per-type on the folded names, unweighted"],
     ["types named", m.annotation_n_predicted_types, "distinct labels returned"],
   ].filter(([, v]) => Number.isFinite(v));
   for (const [k, v, note] of rows) {
@@ -334,12 +342,17 @@ export function annotationScores(run) {
   // author's vocabulary - a different statement, so do not conflate them.
   const names = Object.values(run.labels());
   const placeholder = names.length > 0 && names.every((n) => /^cluster[_ ]?\d+$/i.test(n));
+  const matched = m.annotation_matched_accuracy;
+  const exact = m.annotation_exact_accuracy;
 
   return {
     title: "How the naming scored",
     subtitle: placeholder
       ? "this run named clusters `cluster_0`, so these read 0 by construction"
-      : "scored against the author's label vocabulary, which it has to match by name",
+      : Number.isFinite(matched) && Number.isFinite(exact) && matched - exact > 0.2
+        ? `${(matched * 100).toFixed(0)}% of cells named correctly; exact-match reads ` +
+          `${(exact * 100).toFixed(0)}% because the two label sets use different words`
+        : "how often the cell-type call matches the author's",
     node,
   };
 }
