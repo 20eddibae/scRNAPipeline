@@ -23,6 +23,13 @@ the number to beat and it is not beaten. The orchestrated route closed more than
 half the gap in one afternoon, and the remaining gap is concentrated in a single
 cluster whose failure is diagnosed below.
 
+> **Correction (Experiment 3):** matched accuracy cannot rank per-cluster
+> annotators. Its one-to-one map gives full credit to a cluster that is
+> consistently given the *wrong* name, so every arm in Experiment 3 ties at
+> 0.848, even the arm that calls 437 CD8 T cells "NK cell". The 0.848 above
+> is that tie, not a result. Experiment 3 reports cell accuracy in a shared
+> vocabulary instead.
+
 Matched accuracy solves the assignment problem between predicted and true label
 sets, so it does not punish an annotator for using a different vocabulary.
 Exact-match accuracy for the same `celltypist` run is **0.1319** — that number
@@ -159,6 +166,97 @@ Absolute confidence is the wrong trigger. "Torn between two types" is a small
 
 `cluster 5` returned 0.70 on one run and 0.64 on the next from identical markers.
 Worth knowing before making any calibration claim.
+
+---
+
+## Experiment 3: Claude vs Jev vs CellTypist on one annotation task
+
+`experiments/head_to_head.py`. Every arm names the same 9 Leiden clusters from
+the same top-10 markers and the same closed list of 8 options. Model arms were
+repeated 3×. Accuracy is **cell accuracy in the shared vocabulary**: the truth
+is projected onto the list, so both monocyte populations become "Monocyte".
+CellTypist's own labels are translated by fixed keyword rules that never read
+the truth.
+
+| arm | cell acc | clusters right | $ per run | wall s | median call |
+|---|---|---|---|---|---|
+| oracle (majority true type, the ceiling) | 0.9052 | 9/9 | — | — | — |
+| `claude-sonnet-5` | **0.9045** | 8/9 | 0.0149 | 16.3 | 1.41 s |
+| `claude-haiku-4-5` | **0.9045** | 8/9 | 0.0076 | 13.2 | 0.93 s |
+| `jev_loop` (production route, evidence loop) | 0.8685 | 8/9 | 0.00032 | 2.3 | 0.21 s |
+| `jev` (one call per cluster) | 0.8677 | 7/9 | 0.00026 | 2.1 | 0.22 s |
+| `celltypist` (per cluster, majority vote) | 0.8677 | 7/9 | 0 (CPU) | 1.3 | — |
+| `overlap` (marker-set intersection, no model) | 0.8677 | 7/9 | 0 | 0.0 | — |
+| `claude-opus-5` | **not measured** | | | | |
+
+Every arm gave identical labels on all 3 repeats, Jev included, so the
+spread is zero.
+
+**The whole difference is one cluster.** Cluster 5, 437 cells, markers
+NKG7, CST7, GZMA, CTSW, B2M, CCL5 … PRF1. Both Claude models call it CD8 T cell.
+Jev, CellTypist and the marker-overlap baseline all call it NK cell. It is
+mostly CD8 T cells, so Claude gets it right. Cluster 3 is 9 proliferating cells
+that only the Jev loop names. It is worth 0.0008 of accuracy.
+
+**Jev loses on accuracy and wins on cost and speed.** It costs about 47× less
+than Sonnet and about 24× less than Haiku, and it is 6–7× faster per call. That
+extrapolates to about $0.03 against $1.66 per 1,000 clusters. Jev did not beat
+the free no-model baseline: it produced the same labels as marker overlap on
+every cluster. Haiku matches Sonnet exactly at half the price, so on this task
+the larger Claude model buys nothing.
+
+**The evidence loop did not fire where it was needed.** `jev_loop` made 10 calls:
+9, plus one retry on cluster 3. Cluster 5 cleared the confidence floor, so its
+CD3 panel was never fetched. This is the trigger defect from Experiment 2,
+now confirmed with a Claude arm that got the cluster right.
+
+**Opus 5 has no row.** The gateway rate-limited every attempt, up to 9 retries
+with backoff per call. Each Claude arm is pinned to its model and fails rather
+than answering with another. The first version of this script fell back
+silently, and its "claude" column was really Sonnet.
+
+**Matched accuracy ties every arm at 0.848**, so it cannot rank them. See the
+correction under the Headline.
+
+Caveats: one dataset, 9 clusters, and the ranking rests on one cluster. List
+prices, not invoices. Claude used adaptive thinking; Haiku 4.5 ran without it.
+
+---
+
+## Experiment 4: does the annotation difference survive into DE?
+
+`experiments/downstream_delta.py`. For every annotator, the same one-vs-rest
+Wilcoxon DE per cell type. It reuses the exact calls priced in Experiment 3, so
+there are no new API calls. Each annotator's top-25 genes per type are compared
+with the top-25 you get from the true labels (Jaccard). Composition is scored
+as total-variation distance from the true mix. The script refuses to run if its
+rebuilt clustering differs from the one Experiment 3 scored.
+
+| arm | cell acc | composition TV | DE Jaccard mean | worst type |
+|---|---|---|---|---|
+| `celltypist`, **per cell** | 0.8901 | **0.049** | **0.850** | 0.67 (CD8) |
+| oracle, per cluster | 0.9052 | 0.060 | 0.735 | 0.00 (NK) |
+| `claude-sonnet-5` / `haiku-4-5` | 0.9045 | 0.060 | 0.735 | 0.00 (NK) |
+| `jev`, `jev_loop`, `overlap`, `celltypist` per cluster | 0.868 | 0.121 | 0.735 | 0.00 (CD8) |
+
+**Claude and Jev tie on DE, and both lose to per-cell CellTypist.** Cluster 5
+holds about 316 CD8 T cells *and* most of the NK cells. Any annotator that
+labels whole clusters must drop one of the two types. Claude drops NK and Jev
+drops CD8. Each loses one type's DE list completely (Jaccard 0), and the means
+come out identical. Even the oracle does no better. The ceiling here is set by
+the clustering, not by the annotator.
+
+CellTypist per cell is the only arm that keeps both types. It has the lowest
+cell accuracy of the three but the best DE and composition. Where CellTypist per
+cell and the Jev route disagree (264 cells), CellTypist is right on 145, Jev on
+88, and neither on 31.
+
+**What this changes.** Per-cluster naming, by Claude or Jev, is capped by
+cluster granularity. Choosing a better namer does not fix a cluster that
+contains two cell types. The lever is splitting cluster 5, either with a finer
+local resolution or with a CD3 panel check, before naming it.
+Experiment 1b picked resolution by hindsight ARI, which prefers *fewer*
+clusters, so it moves the wrong way for this.
 
 ---
 

@@ -1,22 +1,30 @@
 """Experiment 4: does the annotation difference survive into the results?
 
 "Annotation is solved" is only true if annotation differences do not change what
-you would report. This runs the same downstream analysis twice over the same
-cells -- once on raw CellTypist labels, once on the triaged labels the decision
-layer produces (marker filtering, plus the evidence loop on anything it could
-not resolve) -- and measures what moved:
+you would report. This runs the same downstream analysis once per annotator over
+the same cells, and once more on the ground-truth labels, then asks of each
+annotator how far its results sit from the ones the truth would have produced:
 
-  * how many cells got re-called,
-  * how cell-type composition shifted,
-  * which marker genes enter or leave the top differential-expression list.
+  * how many cells it called correctly,
+  * how far its cell-type composition is from the true one (total variation),
+  * whether each cell type's top differential-expression list matches the list
+    the true labels give (Jaccard of the top-N genes, one-vs-rest Wilcoxon).
 
-pbmc3k has ground truth, so each of those deltas is also scored: a difference
-that makes the labels *worse* is not an argument for the decision layer. A delta
-on its own says only that two methods disagree.
+Every delta is scored against ground truth, not against another annotator: a
+difference that makes the results worse is not an argument for anything, and
+two annotators disagreeing says only that they disagree.
 
-Deliberately no new pipeline step. The point is to price the annotation
-difference in the currency a biologist actually reads -- composition and DE --
-using only what already exists.
+The per-cluster annotators (Jev, Jev with the evidence loop, each Claude model,
+the marker-overlap baseline) are read from `head_to_head.json` rather than
+called again, so this costs nothing and scores exactly the calls that were
+priced there. CellTypist is re-run here per cell, which is how it is used in
+practice. The run refuses to start if the clustering it rebuilds differs from
+the one head_to_head scored, because then the labels would land on other cells.
+
+Everything is compared in the shared vocabulary. Ground truth is projected onto
+it (both monocyte populations become "Monocyte"), and CellTypist's own labels
+are translated by the same fixed keyword rules head_to_head uses, which never
+read the answer key.
 """
 
 from __future__ import annotations
@@ -28,133 +36,143 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scanpy as sc
 
+from head_to_head import PINNED, RESULTS, TRUTH_TO_VOCAB, celltypist_to_vocab
 from scrnapipeline.pipeline import Pipeline
-from scrnapipeline.steps.annotate import (_annotate_celltypist, _annotate_jev,
-                                          _top_markers)
-from scrnapipeline.steps.evaluate import _matched_accuracy
+from scrnapipeline.steps.annotate import _annotate_celltypist
 
-PINNED = {"qc.stringency": "standard", "qc.flag_doublets": False,
-          "normalize.method": "log1p_cpm", "features.n_hvg": 2000,
-          "features.n_pcs": 50, "cluster.resolution": 1.0}
 TOP_N = 25
-
-
-def align(predicted: np.ndarray, truth: np.ndarray) -> dict[str, str]:
-    """Best one-to-one map from a label set onto the ground-truth vocabulary."""
-    from scipy.optimize import linear_sum_assignment
-
-    pred_labels = sorted(set(predicted))
-    true_labels = sorted(set(truth))
-    table = np.zeros((len(pred_labels), len(true_labels)), dtype=np.int64)
-    pi = {l: i for i, l in enumerate(pred_labels)}
-    ti = {l: j for j, l in enumerate(true_labels)}
-    for p, t in zip(predicted, truth):
-        table[pi[p], ti[t]] += 1
-    rows, cols = linear_sum_assignment(-table)
-    return {pred_labels[r]: true_labels[c] for r, c in zip(rows, cols)}
+MIN_CELLS = 10
+OUT = Path("experiments/results/downstream_delta.json")
 
 
 def de_genes(adata, labels: np.ndarray, group: str, key: str) -> list[str]:
     """Top differentially expressed genes for one cell type, one-vs-rest."""
     adata.obs[key] = labels
     counts = adata.obs[key].value_counts()
-    if counts.get(group, 0) < 10 or len(counts[counts >= 3]) < 2:
+    if counts.get(group, 0) < MIN_CELLS or len(counts[counts >= 3]) < 2:
         return []
     sc.tl.rank_genes_groups(adata, key, groups=[group], method="wilcoxon",
                             key_added=f"de_{key}")
-    names = adata.uns[f"de_{key}"]["names"]
-    return [str(g) for g in names[group][:TOP_N]]
+    return [str(g) for g in adata.uns[f"de_{key}"]["names"][group][:TOP_N]]
 
 
 def main() -> int:
+    h2h = json.loads(RESULTS.read_text())
+    setup = h2h["_setup"]
+
     pipeline = Pipeline("pbmc3k", overrides=PINNED, plan=False)
     for step in ("load", "qc", "normalize", "features", "integrate", "cluster"):
         pipeline.execute(step)
     adata = pipeline.adata
-    settings = pipeline.settings
 
-    sc.tl.rank_genes_groups(adata, "leiden", method="wilcoxon")
-    markers = _top_markers(adata, n=10)
-    clusters = adata.obs["leiden"].to_numpy().astype(str)
-
-    print("annotating: A = raw celltypist, B = triaged (filter + evidence loop)",
-          flush=True)
-    _, per_cell_a, source_a = _annotate_celltypist(adata)
-    labels_b_map, _, source_b = _annotate_jev(adata, markers, settings, "human PBMC")
-    per_cell_b = np.array([labels_b_map[c] for c in clusters])
-    print(f"  A: {source_a}\n  B: {source_b}", flush=True)
+    sizes = {c: int((adata.obs["leiden"] == c).sum())
+             for c in adata.obs["leiden"].cat.categories}
+    if sizes != setup["cluster_sizes"]:
+        raise SystemExit(f"clustering differs from head_to_head's:\n  here  {sizes}\n"
+                         f"  there {setup['cluster_sizes']}")
 
     label_key = pipeline.state.obs["label_key"]
     mask = adata.obs[label_key].notna().to_numpy()
-    truth = adata.obs[label_key].to_numpy().astype(str)[mask]
-    a = np.asarray(per_cell_a).astype(str)[mask]
-    b = np.asarray(per_cell_b).astype(str)[mask]
+    truth = np.array([TRUTH_TO_VOCAB[t] for t in
+                      adata.obs[label_key].to_numpy()[mask].astype(str)])
+    clusters = adata.obs["leiden"].to_numpy().astype(str)[mask]
 
-    # Project both onto the ground-truth vocabulary so they are comparable.
-    a_mapped = np.array([align(a, truth).get(x, "Unclear") for x in a])
-    b_mapped = np.array([align(b, truth).get(x, "Unclear") for x in b])
+    # ------------------------------------------------ per-cell labels, per arm
+    arms: dict[str, np.ndarray] = {}
+    notes: dict[str, str] = {}
+    for name, result in h2h.items():
+        if name.startswith("_") or not result.get("runs"):
+            continue
+        runs = result["runs"]
+        # Score the first repeat; say so when the repeats disagreed.
+        labels = runs[0]["labels"]
+        n_distinct = len({json.dumps(r["labels"], sort_keys=True) for r in runs})
+        if n_distinct > 1:
+            notes[name] = f"{n_distinct} distinct labelings across {len(runs)} repeats; first scored"
+        per_cell = np.array([labels.get(c) or "Unclear" for c in clusters])
+        arms["celltypist_cluster" if name == "celltypist" else name] = per_cell
 
-    changed = a_mapped != b_mapped
-    a_right, b_right = a_mapped == truth, b_mapped == truth
-    report: dict = {
-        "n_cells": int(mask.sum()),
-        "recalled_fraction": round(float(changed.mean()), 4),
-        "accuracy_A_celltypist": round(float(a_right.mean()), 4),
-        "accuracy_B_triaged": round(float(b_right.mean()), 4),
-        "matched_accuracy_A": _matched_accuracy(a, truth),
-        "matched_accuracy_B": _matched_accuracy(b, truth),
-        # Of the cells the two disagree about, who is right?
-        "among_recalled": {
-            "n": int(changed.sum()),
-            "A_correct": int(a_right[changed].sum()),
-            "B_correct": int(b_right[changed].sum()),
-            "neither": int((~a_right[changed] & ~b_right[changed]).sum()),
-        },
-    }
+    print("running celltypist per cell", flush=True)
+    _, ct_cells, source = _annotate_celltypist(adata)
+    ct_cells = np.asarray(ct_cells).astype(str)[mask]
+    arms["celltypist_per_cell"] = np.array([celltypist_to_vocab(x) for x in ct_cells])
+    notes["celltypist_per_cell"] = (f"{source}; native -> vocab: " + ", ".join(
+        f"{n}->{celltypist_to_vocab(n)}" for n in sorted(set(ct_cells))))
 
-    print(f"\n=== cells re-called: {report['recalled_fraction']:.1%} "
-          f"({report['among_recalled']['n']} of {report['n_cells']}) ===")
-    print(f"  of those, A right: {report['among_recalled']['A_correct']}"
-          f"  B right: {report['among_recalled']['B_correct']}"
-          f"  neither: {report['among_recalled']['neither']}")
-
-    print("\n=== composition (fraction of cells) ===")
-    types = sorted(set(truth) | set(a_mapped) | set(b_mapped))
-    print(f"  {'cell type':<24s} {'truth':>8s} {'A':>8s} {'B':>8s} {'B-A':>8s}")
-    composition = {}
-    for t in types:
-        ft, fa, fb = (truth == t).mean(), (a_mapped == t).mean(), (b_mapped == t).mean()
-        composition[t] = {"truth": round(float(ft), 4), "A": round(float(fa), 4),
-                          "B": round(float(fb), 4), "delta": round(float(fb - fa), 4)}
-        print(f"  {t:<24s} {ft:8.3f} {fa:8.3f} {fb:8.3f} {fb - fa:+8.3f}")
-    report["composition"] = composition
-
-    print(f"\n=== top-{TOP_N} DE genes, per cell type, A vs B ===")
+    # ------------------------------------------------ DE under the truth
     sub = adata[mask].copy()
-    de_delta = {}
-    for t in types:
-        if (a_mapped == t).sum() < 10 or (b_mapped == t).sum() < 10:
-            continue
-        ga = de_genes(sub, a_mapped, t, "label_a")
-        gb = de_genes(sub, b_mapped, t, "label_b")
-        if not ga or not gb:
-            continue
-        entered, left = sorted(set(gb) - set(ga)), sorted(set(ga) - set(gb))
-        de_delta[t] = {"entered": entered, "left": left,
-                       "jaccard": round(len(set(ga) & set(gb)) / len(set(ga) | set(gb)), 3)}
-        print(f"  {t:<24s} jaccard={de_delta[t]['jaccard']:.3f}"
-              f"  entered={len(entered):2d} left={len(left):2d}")
-        if entered:
-            print(f"      entered: {', '.join(entered[:8])}")
-    report["de_delta"] = de_delta
+    types = [t for t in sorted(set(truth)) if (truth == t).sum() >= MIN_CELLS]
+    reference = {t: de_genes(sub, truth, t, "truth") for t in types}
 
-    out = Path("experiments/results/downstream_delta.json")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=2, default=str))
-    print(f"\nwrote {out}")
+    report: dict = {"n_cells": int(mask.sum()), "top_n": TOP_N, "types": types,
+                    "truth_composition": {t: round(float((truth == t).mean()), 4)
+                                          for t in sorted(set(truth))},
+                    "notes": notes, "arms": {}}
+
+    for name, labels in arms.items():
+        print(f"scoring {name}", flush=True)
+        all_types = sorted(set(truth) | set(labels))
+        tv = 0.5 * sum(abs((labels == t).mean() - (truth == t).mean())
+                       for t in all_types)
+        per_type = {}
+        for t in types:
+            genes = de_genes(sub, labels, t, "arm")
+            # A type the annotator never produced has no DE list at all: every
+            # true marker for it is lost, which is Jaccard 0, not a skip.
+            j = (len(set(genes) & set(reference[t])) /
+                 len(set(genes) | set(reference[t]))) if genes else 0.0
+            per_type[t] = {
+                "jaccard": round(j, 3),
+                "n_cells_called": int((labels == t).sum()),
+                "missing_true_markers": sorted(set(reference[t]) - set(genes))[:10],
+            }
+        report["arms"][name] = {
+            "cell_accuracy": round(float((labels == truth).mean()), 4),
+            "composition_tv": round(float(tv), 4),
+            "de_jaccard_mean": round(float(np.mean([v["jaccard"]
+                                                    for v in per_type.values()])), 3),
+            "de_jaccard_min": round(float(min(v["jaccard"]
+                                              for v in per_type.values())), 3),
+            "per_type": per_type,
+            "composition": {t: round(float((labels == t).mean()), 4)
+                            for t in all_types},
+        }
+
+    # The original A-vs-B question: of the cells CellTypist and the Jev route
+    # disagree about, who is right?
+    if "jev_loop" in arms:
+        a, b = arms["celltypist_per_cell"], arms["jev_loop"]
+        changed = a != b
+        report["celltypist_vs_jev_loop"] = {
+            "n_disagree": int(changed.sum()),
+            "celltypist_right": int((a == truth)[changed].sum()),
+            "jev_loop_right": int((b == truth)[changed].sum()),
+            "neither": int(((a != truth) & (b != truth))[changed].sum()),
+        }
+
+    print(f"\n=== DOWNSTREAM vs TRUTH ({report['n_cells']} cells, top-{TOP_N} DE) ===")
+    print(f"  {'arm':22s} {'cell acc':>9s} {'comp TV':>8s} {'DE J mean':>10s} {'DE J min':>9s}")
+    for name, r in sorted(report["arms"].items(),
+                          key=lambda kv: -kv[1]["de_jaccard_mean"]):
+        print(f"  {name:22s} {r['cell_accuracy']:9.4f} {r['composition_tv']:8.4f}"
+              f" {r['de_jaccard_mean']:10.3f} {r['de_jaccard_min']:9.3f}")
+    print("\n  per type (DE Jaccard vs truth):")
+    print("  " + " " * 22 + "".join(f"{t[:10]:>11s}" for t in types))
+    for name, r in report["arms"].items():
+        print(f"  {name:22s}" + "".join(f"{r['per_type'][t]['jaccard']:11.2f}"
+                                        for t in types))
+    if "celltypist_vs_jev_loop" in report:
+        print(f"\n  celltypist vs jev_loop: {report['celltypist_vs_jev_loop']}")
+    for k, v in notes.items():
+        print(f"  note {k}: {v}")
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(report, indent=2, default=str))
+    print(f"\nwrote {OUT}")
     return 0
 
 
