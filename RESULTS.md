@@ -580,3 +580,36 @@ identical cascade (12/12 ties) at 4× the price. The cascade's H1 miss is not an
 escalation-target problem either: on the cluster that decided it, Sonnet was
 the only Claude model that was right. Latency is not like-for-like: Opus went
 direct and the others through the gateway.
+
+---
+
+## Experiment 8: the blood resolution swing is one naming decision, not the partition
+
+`experiments/escalation.py`. The run is scTab blood on the seed-0 partition of
+each rung. It names every cluster three ways: the Jev route; the Jev route with
+its `Unclear` clusters escalated to `claude-haiku-4-5`; and Haiku on every
+cluster. Per-cluster rows are saved.
+
+| rung | jev | jev + escalate Unclear | claude-haiku on all |
+|---|---|---|---|
+| 0.6 | 0.8700 | 0.8731 | 0.8661 |
+| 0.8 | **0.7661** | 0.7692 | 0.8634 |
+| 1.0 | 0.8421 | 0.8452 | 0.8390 |
+
+**The 10-point swing in Experiment 7 is one cluster.** It is the large CD8 T
+cluster: 1,188 cells at 0.6, 1,210 at 0.8 and 767 at 1.0, 80–85 % CD8. Jev names
+it CD8 at 0.6 and **NK at 0.8 and 1.0**. That is the same CD8-vs-NK boundary the
+probe flagged as the one genuinely hard question (Experiment 5), and the same
+confusion as pbmc3k's cluster 5. The partitions are nearly the same. The name
+flips. Resolution "mattered" only because it nudged the cluster's marker list
+across Jev's CD8/NK boundary.
+
+- **Escalating abstentions is worth +0.003.** The clusters Jev declines are
+  small (25–60 cells). Claude gets the DC cluster right. The small CD8 fragment
+  defeats both models.
+- **Claude is stable across rungs (0.839–0.866). Jev is not (0.766–0.870).**
+  Claude gets the big CD8 cluster right at 0.8 and wrong at 1.0, so the boundary
+  is hard for both. Jev's is simply easier to cross.
+- The evidence loop did not fire on the big cluster. Jev was not torn enough by
+  either trigger, which makes three datasets on which the loop missed the one
+  cluster that needed it.
