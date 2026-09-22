@@ -1,0 +1,48 @@
+/* Design tokens.
+   One place to restyle the whole demo. The palette follows the TypeSafe/Jev
+   playground's reading: near-black surfaces, one accent per actor, and
+   probability shown as ink rather than as a number in prose. */
+
+:root {
+  /* surfaces */
+  --bg:        #0a0b0d;
+  --surface:   #111318;
+  --surface-2: #171a21;
+  --border:    #23262f;
+  --border-2:  #30343f;
+
+  /* text */
+  --text:      #e9ecf1;
+  --text-dim:  #99a1b0;
+  --text-faint:#646c7a;
+
+  /* actors: who made this call */
+  --jev:       #2dd4a7;   /* the decision model */
+  --jev-soft:  rgba(45, 212, 167, 0.14);
+  --claude:    #d97757;   /* the language model */
+  --claude-soft: rgba(217, 119, 87, 0.14);
+  --fallback:  #7c8496;   /* declared default was taken */
+  --fallback-soft: rgba(124, 132, 150, 0.14);
+  --modal:     #7c6cff;   /* compute */
+  --modal-soft: rgba(124, 108, 255, 0.14);
+
+  /* status */
+  --ok:        #2dd4a7;
+  --warn:      #e3b341;
+  --err:       #f0736a;
+
+  /* categorical series for plots (colour-blind-safe ordering) */
+  --c1: #4c8dff; --c2: #2dd4a7; --c3: #e3b341; --c4: #d97757;
+  --c5: #b98cff; --c6: #4ecde6; --c7: #f0736a; --c8: #8ed081;
+  --c9: #d4a0c8; --c10:#7c8496;
+
+  /* type */
+  --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* geometry */
+  --r-sm: 6px; --r: 10px; --r-lg: 14px;
+  --gap: 16px;
+  --rail: 248px;
+  --maxw: 1240px;
+}

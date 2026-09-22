@@ -8,9 +8,14 @@ venv/
 *.egg-info/
 .ipynb_checkpoints/
 data/
+!web/data/
 runs/*
 !runs/.gitkeep
 *.h5ad
 *.tar.gz
 .modal/
 .pytest_cache/
+
+# the web demo is static; nothing here is built
+web/node_modules/
+web/.vercel/

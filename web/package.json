@@ -1,0 +1,14 @@
+{
+  "name": "scrnapipeline-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Static walkthrough of one scRNA-seq run: the eight steps, the typed decisions behind them, and the plots at each one.",
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes serve --listen 5173 --no-clipboard .",
+    "dev:vercel": "npx --yes vercel dev --listen 5173",
+    "dev:python": "python3 -m http.server 5173",
+    "deploy": "npx --yes vercel deploy --prod"
+  },
+  "engines": { "node": ">=18" }
+}
