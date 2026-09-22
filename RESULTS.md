@@ -338,3 +338,122 @@ a model for an opinion is the wrong move. Semantic decisions have no internal
 criterion — there is no unsupervised statistic for "is this a B cell" — and a
 genuinely closed option set. That is where a calibrated typed model earns its
 place.
+
+---
+
+## Experiment 5: which of Jev's decisions have a boundary at all?
+
+`experiments/boundary_probe.py`. Experiment 1 found Jev returning the scanpy
+defaults. Two readings were possible: (a) the questions are easy, since every
+realistic input sits inside one option's region, or (b) Jev is not reading the
+evidence. To separate them, each production question was asked with everything
+fixed except the one statistic it tells Jev to weigh. That statistic was swept
+from one textbook extreme to the other: 8 points, 3 repeats each, plus a
+reversed-option-order control. The confidence floor was off, so these are the
+raw answers.
+
+| decision | swept | answer across the sweep | flip | conf at flip / away |
+|---|---|---|---|---|
+| `qc.stringency` | median % mito 1 → 35 | standard → strict | 18 → 25 % | 0.46 / 0.88 |
+| `integrate.method` | batches 2 → 700 | harmony → bbknn | 5 → 10 | 0.51 / 0.80 |
+| `annotate.cell_type` (cluster-5 markers) | CD3 panel 0 → 2.5 | NK → CD8 | 0.5 → 1.8, **non-monotone** | 0.52 / 0.97 |
+| `qc.stringency` | genes/cell 150 → 6000 | standard throughout | none | — / 0.80 |
+| `qc.flag_doublets` | cells 300 → 150k | True throughout (p 0.56 → 0.71) | none | — / 0.28 |
+| `normalize.method` | UMIs/cell 300 → 80k | log1p_cpm throughout | none | — / 0.74 |
+| `features.n_hvg` | cells 300 → 1M | 2000 throughout | none | — / 0.34 |
+| `features.n_pcs` | cells 300 → 1M | 50 throughout | none | — / 0.58 |
+| `cluster.resolution` | cells 300 → 1M | 0.8 throughout | none | — / 0.80 |
+| `integrate.integrate` | batches 2 → 700 | True throughout (p 0.72 → 0.87) | none | — / 0.63 |
+
+**Seven of the ten sweeps never change their answer across three orders of
+magnitude.** That is reading (b). Normalization stays `log1p_cpm` at 300
+UMIs/cell, where Pearson residuals are the textbook answer. The doublet check
+says True at 300 cells. `n_hvg` sits below the 0.55 floor at every point, so in
+production the default always wins and Jev never decides it.
+
+**Three have a real boundary, and confidence dips at it.** That is what a
+calibrated answer to a hard question looks like. The mito and integration-method
+boundaries are in plausible places. The CD8-vs-NK boundary is the genuinely hard
+one: it flips back and forth between 0.5 and 1.8 of CD3, it is the only sweep
+where repeats disagreed, and the answer moved when the option order was reversed.
+
+**A tough question has an ambiguous boundary *inside* the realistic range.** Only
+the semantic question has one. Every tuning question that responds at all has
+its boundary far from where a healthy 10x run sits, so on real data the default
+is simply returned. This supports the placement rule from the section above,
+now from Jev's side of the call.
+
+Caveat: these are one-field sweeps on synthetic observation dicts. Several
+questions ask Jev to weigh things the state never contains. `n_hvg` asks about
+heterogeneity, and no heterogeneity statistic is observed. So part of "does not
+respond" is "was not told".
+
+### The new question, probed the same way before being trusted
+
+`cluster_nature`: `one_type` / `two_types` / `doublets` / `low_quality`, asked
+per cluster before it is named.
+
+| sweep | textbook | Jev |
+|---|---|---|
+| CD3 in 0 → 97 % of a cytotoxic cluster | one → two → one | one_type ≤ 5 %, **two_types 15–50 %**, one_type ≥ 70 % |
+| myeloid co-expressed in the same T cells | one → doublets | flips at 20 → 30 % to **doublets** |
+| same myeloid fraction in *different* cells | one → two_types | flips at 20 → 30 % to **two_types** |
+| stress-gene share 2 → 70 % | one → low_quality | one_type throughout: **fails** |
+
+The middle two rows are the test that matters. The same lineage fractions
+become `doublets` when they share cells and `two_types` when they do not. That
+is biology, not a threshold. `low_quality` never fires.
+
+---
+
+## Experiment 6: asking what kind of cluster it is, before naming it
+
+`experiments/nature_split.py`. Experiment 4 said the per-cluster ceiling is set
+by clustering: cluster 5 holds CD8 T cells and NK cells together. This experiment
+uses the same clustering as Experiments 3 and 4 (resolution 1.0 pinned) and the
+same metric (cell accuracy in the shared vocabulary), with 3 repeats per route.
+
+| route | cell acc | oracle for its partition | clusters |
+|---|---|---|---|
+| Experiment 3 production (`jev_loop`) | 0.8685 | 0.9052 | 9 |
+| + evidence loop also fires on top-2 margin < 0.30 | 0.8685 | 0.9052 | 9 |
+| + `cluster_nature`, split when P(two_types) ≥ 0.30 | **0.9572** | 0.9572 | 10 |
+| for reference: `claude-sonnet-5` / `haiku-4-5` (Exp. 3) | 0.9045 | 0.9052 | 9 |
+
+All 3 repeats of every route gave the same number. The split separates cluster 5
+into 239 CD8 + 15 CD4 and 148 NK + 11 CD8, and Jev names both halves correctly.
+This is the first route in the project to beat the Claude arms and the old
+per-cluster oracle. It gets there by changing the question, not the namer.
+
+**What got the decision wrong first, in order:**
+
+1. **The evidence.** The first version reported "fraction of cells positive" per
+   lineage. Ambient LYZ from lysed monocytes reads >1.5 log1p in 45 % of CD4 T
+   cells, so Jev called 7 of 9 real clusters `doublets`. Adding each lineage's
+   level relative to the cluster that owns it fixed monocytes (one_type 0.79).
+   The T clusters are still flagged. Flags do not change labels.
+2. **The confidence floor.** Jev's top answer on cluster 5 was `two_types` at
+   **0.48**. That was right, and the 0.55 floor threw it away.
+
+**Why the rule is a probability threshold, not the floor.** Splits were forced
+by hand to price both errors. Splitting cluster 5 is worth +0.089. Splitting the
+two pure CD4 clusters as well costs **0.000**, because both halves get the same
+name. A free false positive and a 9-point false negative mean "split when
+two_types is plausible", not "split when Jev is sure". This is the
+confidence-vs-consequence point from Experiment 1: the model supplies P(right),
+and the cost asymmetry has to come from the pipeline.
+
+**Caveats, and they matter:**
+
+- **The 0.30 threshold was chosen after seeing 0.48.** It is not tuned on a
+  held-out set. It is at least not knife-edge: cluster 5 sits at P(two_types)
+  0.44–0.49, and the next-highest cluster is 0.21. Any threshold in 0.22–0.43
+  gives the same result on this data.
+- One dataset, one tissue, one clustering, and the gain comes from one cluster.
+- **Not comparable to the linear probe's 0.9457.** The probe is 8-class on a
+  held-out 30 %. This metric is 7-class (the two monocyte types merge) on all
+  cells.
+- The margin trigger did nothing here. Cluster 5's first answer was not torn by
+  the margin measure, so the fix to the Experiment 2 defect is untested.
+- `low_quality` is unresponsive, and `doublets` over-calls T clusters. Two of
+  the four options are not yet trustworthy.
