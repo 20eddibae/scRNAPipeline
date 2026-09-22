@@ -613,3 +613,23 @@ across Jev's CD8/NK boundary.
 - The evidence loop did not fire on the big cluster. Jev was not torn enough by
   either trigger, which makes three datasets on which the loop missed the one
   cluster that needed it.
+
+### Panel first: giving the evidence up front moves the boundary, it does not sharpen it
+
+Both triggers missed the cluster that needed CD3, so `panel_first=True` hands
+every cluster the canonical lineage panel on the first call. It runs on the same
+partitions, with no further split. `ESC_SKIP_CLAUDE=1 experiments/escalation.py`.
+
+| rung | jev | jev, panel first | what changed |
+|---|---|---|---|
+| 0.6 | 0.8700 | 0.8011 | NK cluster (627 cells, 89 % NK) → Unclear |
+| 0.8 | 0.7661 | 0.8000 | CD8 cluster (1,210) NK → **CD8, fixed**; NK cluster (593) → Unclear |
+| 1.0 | 0.8421 | 0.8380 | CD8 cluster (767) NK → **CD8, fixed**; NK cluster (585) → Unclear |
+
+The panel fixes the CD8 cluster every time, and **costs the real NK cluster
+every time**. Net: −0.069, +0.034, −0.004. The evidence did not make Jev
+better at the CD8/NK boundary. It moved the boundary, trading one side's errors
+for the other's. It is off by default. This is the same boundary Experiment 5
+found non-monotone and sensitive to option order, now on real clusters on both
+sides of it: **the hardest decision in the pipeline is CD8 T vs NK, and none of
+the evidence we give Jev settles it in both directions at once.**
