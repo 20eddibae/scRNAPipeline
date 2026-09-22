@@ -4,9 +4,12 @@
  * deployed demo can show a run that just finished on Modal without the browser
  * hitting a cross-origin endpoint directly.
  *
+ * This serves a *saved* record, so it is a `?run=` source, not `?api=` - `?api=`
+ * is the live streaming backend, which the browser calls directly.
+ *
  * Set MODAL_RUN_URL in the Vercel project's environment; leave it unset and the
  * function reports that cleanly rather than 500-ing. Load it in the page with
- *   ?api=/api/run
+ *   ?run=/api/run
  * No key is read here: the endpoint on the Modal side is the trust boundary. */
 
 export default async function handler(req, res) {

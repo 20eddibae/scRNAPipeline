@@ -69,3 +69,8 @@ footer {
   .layout { grid-template-columns: 1fr; padding: 16px; gap: 16px; }
   .rail { position: static; }
 }
+
+/* the control strip sits between the banner and the layout */
+#runner { margin: 12px auto 0; }
+#runner:empty { display: none; }
+#banner:empty { display: none; }

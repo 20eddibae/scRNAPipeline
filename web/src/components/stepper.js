@@ -5,7 +5,7 @@ import { h } from "./dom.js";
 
 const WHO = { jev: "Jev decides", claude: "Claude reads", neither: "no decision point" };
 
-export function renderStepper(root, run, { active, onSelect }) {
+export function renderStepper(root, run, { active, running, onSelect }) {
   const overview = h("button", {
     class: "rail-item",
     "aria-current": active === OVERVIEW,
@@ -24,8 +24,9 @@ export function renderStepper(root, run, { active, onSelect }) {
 
   run.timeline().forEach((entry, i) => {
     const { spec, status, decisions } = entry;
+    const live = spec.name === running;
     const item = h("button", {
-      class: `rail-item ${status === "ok" ? "done" : status}`,
+      class: `rail-item ${status === "ok" ? "done" : status}${live ? " active" : ""}`,
       "aria-current": spec.name === active,
       onClick: () => onSelect(spec.name),
     },
@@ -33,9 +34,11 @@ export function renderStepper(root, run, { active, onSelect }) {
       h("span", {},
         h("span", { class: "rail-name", text: spec.name }),
         h("span", { class: "rail-who", style: "display:block",
-          text: decisions.length
-            ? `${decisions.length} decision${decisions.length > 1 ? "s" : ""} · ${WHO[spec.decidedBy]}`
-            : WHO[spec.decidedBy] }),
+          text: live
+            ? "running…"
+            : decisions.length
+              ? `${decisions.length} decision${decisions.length > 1 ? "s" : ""} · ${WHO[spec.decidedBy]}`
+              : WHO[spec.decidedBy] }),
       ),
     );
     list.appendChild(h("li", {}, item));

@@ -39,6 +39,40 @@ npm run deploy       # npx vercel deploy --prod
 are served as they are. If you deploy the repository rather than this folder,
 set the project's *Root Directory* to `web`.
 
+## Running the pipeline for real
+
+Out of the box the page **replays** a saved record — nothing executes. To make
+the Run button work, give it a backend. A browser cannot run scanpy, so the
+pipeline runs server-side and streams its record after every step.
+
+Locally:
+
+```bash
+pip install fastapi uvicorn
+uvicorn scrnapipeline.server:app --port 8000     # from the repo root, with src on PYTHONPATH
+```
+
+then open `http://localhost:5173/?api=http://localhost:8000`, pick a dataset and
+press **Run pipeline**. The rail marks the step being worked on, and each panel
+appears as soon as the step that produces it finishes — QC scatter after `qc`,
+the scree plot after `features`, the UMAP after `cluster`, the scores after
+`evaluate`.
+
+On Modal:
+
+```bash
+modal deploy modal_app.py
+# -> https://<workspace>--scrna-pipeline-web.modal.run
+```
+
+then `?api=https://<workspace>--scrna-pipeline-web.modal.run`, or use the
+backend button in the control bar, which remembers the URL.
+
+**A deployed endpoint is open unless you close it.** Set `DEMO_TOKEN` on the
+Modal secret and the endpoint requires `?token=`; set `DEMO_ORIGINS` to pin CORS
+to your Vercel domain. A run spends real compute and real model credits, so do
+both before the URL goes anywhere public.
+
 ## Where the numbers come from
 
 Nothing on the page is typed into the page. It reads one JSON record:
@@ -59,7 +93,8 @@ Three sources, in order:
 |-----|------------|
 | `/` | the bundled `data/run-demo.json` |
 | `/?run=<url>` | any exported record served from anywhere |
-| `/?api=/api/run` | a live record proxied from Modal (needs `MODAL_RUN_URL`) |
+| `/?run=/api/run` | a saved record proxied from Modal (needs `MODAL_RUN_URL`) |
+| `/?api=<backend>` | run the pipeline live against that backend |
 
 ## Layout
 
@@ -75,11 +110,13 @@ src/
   main.js                   load a record, draw the rail, draw a view
   config.js                 copy about the demo itself
   steps/spec.js             the eight steps as the UI describes them
-  data/source.js            bundled | ?run= | ?api=
+  data/source.js            where a saved record comes from
+  data/live.js              the SSE client for a live run
   data/schema.js            the view model over one run record
   components/
     dom.js                  h(), chip(), replace(), fmt()
     header.js               top bar + the "this is a demo record" banner
+    runner.js               dataset picker, Run button, backend status
     stepper.js              the eight-step rail
     overview.js             landing view: the flow, the decision ledger, the scores
     step-card.js            the detail pane for one step

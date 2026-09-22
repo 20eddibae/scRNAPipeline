@@ -16,7 +16,7 @@ export function renderHeader(root, run, { onReplay } = {}) {
     chip(`${t.fallback} default`, "fallback"),
     chip(`floor ${run.confidenceFloor.toFixed(2)}`, "mono"),
     onReplay ? h("button", { class: "chip modal", onClick: onReplay },
-      h("span", { class: "dot" }), "Replay run") : null,
+      h("span", { class: "dot" }), "Step through") : null,
   );
   root.replaceChildren(bar);
 }

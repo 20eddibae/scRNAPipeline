@@ -14,7 +14,7 @@ const WHO_CHIP = {
 
 const HIDE_FROM_SUMMARY = new Set(["framing", "labels", "markers"]);
 
-export function renderStepCard(root, run, stepName, index) {
+export function renderStepCard(root, run, stepName, index, { running = false } = {}) {
   const entry = run.timeline().find((e) => e.spec.name === stepName);
   if (!entry) { root.replaceChildren(); return; }
 
@@ -28,8 +28,10 @@ export function renderStepCard(root, run, stepName, index) {
       h("code", { class: "decision-type", text: spec.name }),
       h("span", { class: "spacer" }),
       WHO_CHIP[spec.decidedBy](),
-      chip(status === "ok" ? `ran in ${fmt(entry.seconds)}s` : status,
-           status === "ok" ? "mono" : "fallback"),
+      running
+        ? chip("running…", "modal")
+        : chip(status === "ok" ? `ran in ${fmt(entry.seconds)}s` : status,
+               status === "ok" ? "mono" : "fallback"),
     ),
     h("div", { class: "card-body" },
       h("p", { class: "lede", text: spec.blurb }),
@@ -38,7 +40,10 @@ export function renderStepCard(root, run, stepName, index) {
       decisions.length
         ? h("div", {}, sectionLabel("decisions taken inside this step"),
             decisions.map(renderDecision))
-        : null,
+        : running
+          ? h("p", { class: "lede", text:
+              "Claude is framing this step's questions and Jev is answering them…" })
+          : null,
 
       reasoning,
       spec.name === "annotate" ? renderLabels(run) : null,
