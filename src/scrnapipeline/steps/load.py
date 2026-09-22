@@ -114,6 +114,8 @@ class LoadStep(Step):
             adata = getattr(sc.datasets, loader)()
             if spec == "pbmc3k":
                 label_key = _graft_pbmc3k_labels(adata)
+            elif not _looks_like_counts(adata):
+                adata = _from_processed_builtin(adata, state)
         else:
             raise ValueError(
                 f"unknown dataset {spec!r}; use one of "
@@ -311,6 +313,26 @@ def _detect_label_key(adata: Any) -> str | None:
         if key in adata.obs and adata.obs[key].notna().any():
             return key
     return None
+
+
+def _from_processed_builtin(adata: Any, state: RunState) -> Any:
+    """scanpy's processed demos ship X already scaled, and log values in .raw.
+
+    pbmc3k_processed and pbmc68k_reduced carry z-scored X (negative values)
+    with the log-normalised matrix kept in `.raw`. Treated as counts, the
+    normalize step took log1p of the negatives, every HVG mean came out NaN,
+    and the run died in `highly_variable_genes` with "Bin edges must be
+    unique: [nan, nan, ...]". Work from `.raw` instead, and mark the run
+    pre-normalised so QC and normalize skip with a stated reason, exactly as
+    for a pre-normalised scTab store.
+    """
+    source = "raw (log-normalised)"
+    if adata.raw is not None:
+        adata = adata.raw.to_adata()  # keeps obs, so the labels come along
+    else:
+        source = "X (already processed; no .raw to fall back on)"
+    state.observe(pre_normalized=True, matrix_source=source)
+    return adata
 
 
 def _looks_like_counts(adata: Any, n: int = 200) -> bool:

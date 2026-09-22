@@ -36,10 +36,13 @@ export const STEPS = [
       "minimum cells per gene, and the ceiling on mitochondrial reads.",
     decidedBy: "jev",
     viz: ["qc_scatter", "qc_retention"],
-    result: (s) => `Kept ${n(s.cells_after)} of ${n(s.cells_before)} cells ` +
+    // a pre-normalised input has no counts to filter; the step says so
+    // rather than printing "Kept ? of ? cells"
+    result: (s) => s.status === "skipped" ? `Skipped: ${s.reason ?? "input already filtered"}.` :
+      `Kept ${n(s.cells_after)} of ${n(s.cells_before)} cells ` +
       `(${n(s.cells_dropped)} removed). Cut-offs: at least ${n(s.min_genes)} genes per cell, ` +
       `at most ${n(s.max_pct_mt)}% mitochondrial reads, genes seen in at least ${n(s.min_cells)} cells.`,
-    brief: (s) => `${n(s.cells_after)} of ${n(s.cells_before)} kept`,
+    brief: (s) => (s.status === "skipped" ? "skipped" : `${n(s.cells_after)} of ${n(s.cells_before)} kept`),
   },
   {
     name: "normalize",
