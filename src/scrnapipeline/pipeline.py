@@ -9,6 +9,7 @@ from typing import Any
 from .claude import ClaudeClient, Orchestrator
 from .config import Settings, load_settings
 from .jev import build_decider
+from .planner import QuestionPlanner
 from .registry import DEFAULT_ORDER, build_steps, tool_schemas, unmet_dependencies
 from .state import RunState, new_run_id
 
@@ -24,6 +25,9 @@ class Pipeline:
         self.state = RunState(run_id=run_id or new_run_id(), dataset=dataset)
         self.decider = build_decider(self.settings)
         self.annotator = None if self.settings.claude_offline else ClaudeClient(self.settings)
+        # Claude frames each step's decision points for this dataset before Jev
+        # answers them. Offline, the steps' baseline questions are used as-is.
+        self.planner = None if self.annotator is None else QuestionPlanner(self.annotator)
         self.steps = build_steps(annotator=self.annotator, context=context)
         self.adata: Any = None
 
@@ -63,7 +67,7 @@ class Pipeline:
         if missing:
             raise ValueError(f"step {name!r} needs {missing} to run first")
 
-        self.adata = step.run(self.adata, self.state, self.decider)
+        self.adata = step.run(self.adata, self.state, self.decider, self.planner)
         return self.state.steps[-1].summary
 
     # -- outputs -----------------------------------------------------------

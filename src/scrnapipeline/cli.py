@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run", help="run the pipeline")
     run.add_argument("--dataset", default="pbmc3k",
-                     help="pbmc3k | pbmc3k_processed | pbmc68k_reduced | h5ad:<path>")
+                     help="pbmc3k | pbmc3k_processed | pbmc68k_reduced | h5ad:<path> | merlin:<dir>")
     run.add_argument("--mode", choices=("scripted", "agent"), default="scripted")
     run.add_argument("--context", default="human PBMC",
                      help="tissue context given to the annotator")

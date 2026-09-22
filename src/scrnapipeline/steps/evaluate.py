@@ -51,6 +51,8 @@ class EvaluateStep(Step):
             "nmi": round(float(normalized_mutual_info_score(truth, clusters)), 4),
         }
         metrics.update(_linear_probe(adata.obsm["X_pca"][mask], truth))
+        if "cell_type" in adata.obs:
+            metrics.update(_score_annotation(adata.obs["cell_type"].values[mask], truth))
 
         state.metrics.update(metrics)
         return adata, metrics
@@ -75,3 +77,38 @@ def _linear_probe(embedding: np.ndarray, labels: np.ndarray, seed: int = 0) -> d
         "probe_macro_f1": round(float(f1_score(y_te, pred, average="macro")), 4),
         "probe_n_test": int(len(y_te)),
     }
+
+
+def _score_annotation(predicted: np.ndarray, truth: np.ndarray) -> dict[str, Any]:
+    """Score the pipeline's actual cell-type calls against the author's.
+
+    This is the terminal readout: the pipeline's output is a cell type per cell,
+    and this asks how often that call is right. It is a harder bar than ARI,
+    which only asks whether the partition agrees -- a partition can be perfect
+    while every label on it is wrong.
+
+    Label strings come from different vocabularies (Claude writes "CD14+
+    Monocyte", CELLxGENE says "CD14-positive monocyte"), so exact-match accuracy
+    is reported as a floor alongside a normalised match.
+    """
+    predicted = np.asarray(predicted).astype(str)
+    truth = np.asarray(truth).astype(str)
+    exact = float((predicted == truth).mean())
+    loose = float((np.array([_norm(p) for p in predicted])
+                   == np.array([_norm(t) for t in truth])).mean())
+    return {
+        "annotation_exact_accuracy": round(exact, 4),
+        "annotation_normalised_accuracy": round(loose, 4),
+        "annotation_macro_f1": round(float(f1_score(truth, predicted,
+                                                    average="macro",
+                                                    zero_division=0)), 4),
+        "annotation_n_predicted_types": int(len(set(predicted))),
+    }
+
+
+def _norm(label: str) -> str:
+    """Fold the trivial vocabulary differences between label sets."""
+    text = label.lower().strip()
+    for old, new in (("-positive", "+"), ("-negative", "-"), ("_", " ")):
+        text = text.replace(old, new)
+    return " ".join(text.replace(",", " ").split())

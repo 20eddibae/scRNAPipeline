@@ -46,6 +46,12 @@ class Settings:
     claude_model: str = field(
         default_factory=lambda: _env("CLAUDE_MODEL", default="claude-opus-5")
     )
+    # An API key that is not scoped to a workspace must name one per request, or
+    # every call returns a 400 that reads like a malformed request rather than a
+    # missing header.
+    anthropic_workspace_id: str | None = field(
+        default_factory=lambda: _env("ANTHROPIC_WORKSPACE_ID")
+    )
     # The server-side refusal fallback is a beta parameter. Off by default because
     # a third-party gateway may reject unknown betas; flip it on against the
     # first-party API.

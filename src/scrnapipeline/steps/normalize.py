@@ -17,6 +17,8 @@ class NormalizeStep(Step):
     needs = ("qc",)
 
     def questions(self, adata: Any, state: RunState) -> dict[str, Question]:
+        if state.obs.get("pre_normalized"):
+            return {}  # nothing left to decide; the store ships sf-log1p values
         return {
             "method": ChoiceQ(
                 instructions=(
@@ -36,6 +38,13 @@ class NormalizeStep(Step):
     def apply(
         self, adata: Any, state: RunState, choices: dict[str, Any]
     ) -> tuple[Any, dict[str, Any]]:
+        if state.obs.get("pre_normalized"):
+            adata.layers["normalized"] = adata.X.copy()
+            state.observe(normalization="pre-applied (sf-log1p in the store)")
+            return adata, {"status": "skipped",
+                           "reason": "store already carries sf-log1p values; "
+                                     "normalizing again would log1p twice"}
+
         method = choices.get("method", "log1p_cpm")
         adata.X = adata.layers["counts"].copy()
 

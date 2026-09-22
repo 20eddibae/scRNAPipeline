@@ -2,11 +2,20 @@
 
 An scRNA-seq analysis pipeline where the judgement calls are explicit.
 
-**Claude** decides *which step runs next* and reads the marker genes.
-**Jev** (TypeSafe's System One model) answers the *typed decision points* inside
-each step — filtering stringency, normalization method, HVG count, whether
-integration is needed, clustering resolution.
+**Claude** decides *which step runs next*, **frames each decision point for the
+data in front of it**, and reads the marker genes.
+**Jev** (TypeSafe's System One model) *answers* those typed questions — filtering
+stringency, normalization method, HVG count, whether integration is needed,
+clustering resolution — with a calibrated probability.
 **Modal** runs the whole thing.
+
+The framing step matters. A step ships a generic baseline question, written
+before anyone saw the matrix; Claude rewrites it against the observed statistics,
+drops options that do not apply to this data, and describes each survivor in
+terms of what it would do *here*. Claude may only narrow and reword — option keys
+are branch labels the step dispatches on, so an invented key is a decision the
+code cannot execute, and anything unrecognised is dropped. See
+`src/scrnapipeline/planner.py`.
 
 Every decision is recorded with its source and confidence, so a run is auditable
 after the fact: which knob was set by the decision model, which fell back to a
@@ -35,17 +44,51 @@ sequencing the run and reading a ranked marker list. Claude does those.
 | 5 | `integrate` | whether integration is needed at all; which method | Jev |
 | 6 | `cluster` | Leiden resolution | Jev |
 | 7 | `annotate` | cell-type label from top markers | Claude |
-| 8 | `evaluate` | — (ARI/NMI + linear probe vs. ground truth) | — |
+| 8 | `evaluate` | — (annotation accuracy, ARI/NMI, linear probe) | — |
+
+Every question in the Jev column is first framed by Claude for the dataset at
+hand; the table lists what is being decided, not who wrote the wording.
 
 Alignment and UMI dedup (Cell Ranger / STARsolo / alevin-fry) are out of scope;
 the pipeline starts from a count matrix.
 
+## Datasets
+
+| Spec | Counts | Ground truth | Batches | Use |
+|------|--------|--------------|---------|-----|
+| `pbmc3k` | raw | 8 types, grafted by barcode from `pbmc3k_processed` | 1 | the 2-minute smoke run |
+| `pbmc68k_reduced` | processed | `bulk_labels` | 1 | quick label sanity |
+| `h5ad:<path>` | yours | `--label-key` | yours | anything else |
+| `merlin:<dir>` | **pre-normalized** | 164 CELLxGENE ontology types | ~740 `tech_sample` | evaluation + scTab head-to-head |
+
+**The scTab Merlin store is not a raw input.** Measured on
+`merlin_cxg_2023_05_15_sf-log1p_minimal`: `X` is float with max 4.897 and 75%
+zeros — already size-factor + log1p normalized, already QC-filtered, already cut
+to scTab's fixed 19,331-gene feature space. Loading it sets `pre_normalized`, and
+`qc` and `normalize` then **skip with a stated reason** rather than log1p the data
+a second time.
+
+That costs the two most contested decision points in the pipeline, which is why
+it is the wrong substrate to demo the Jev layer on. What it is very good at is
+the other half: 164 ontology-controlled cell types and ~740 technical samples in
+a single 32,768-cell split, in the exact feature space scTab expects. Use it to
+score annotation and to run the head-to-head; use a raw-count dataset to exercise
+the decisions.
+
 ## Evaluation
 
-Two readouts of a different kind, both against held-out author labels:
+The terminal output is a cell type per cell, so the headline number is how often
+that call is right. Three readouts, deliberately different in kind, all against
+held-out author labels:
 
+- **annotation accuracy** — the pipeline's actual cell-type calls vs. the
+  author's. This is the real bar. It is strictly harder than ARI: a partition can
+  be perfect while every label on it is wrong. Reported as exact match and as a
+  normalised match, because Claude writes "CD14+ Monocyte" where CELLxGENE says
+  "CD14-positive monocyte" and that difference is vocabulary, not error.
 - **unsupervised** — ARI and NMI of the Leiden partition vs. the ground-truth
-  cell types. Asks whether the pipeline's decisions recovered known structure.
+  cell types. Asks whether the pipeline's decisions recovered known structure,
+  independent of naming.
 - **supervised** — a logistic-regression probe on the PCA embedding, 70/30
   stratified. Asks how much cell-type information the representation carries at
   all, independent of where the cluster boundaries landed.

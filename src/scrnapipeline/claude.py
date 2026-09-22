@@ -43,6 +43,10 @@ class ClaudeClient:
             kwargs: dict[str, Any] = {"api_key": self.settings.require_anthropic()}
             if self.settings.anthropic_base_url:
                 kwargs["base_url"] = self.settings.anthropic_base_url
+            if self.settings.anthropic_workspace_id:
+                kwargs["default_headers"] = {
+                    "anthropic-workspace-id": self.settings.anthropic_workspace_id
+                }
             self._client = anthropic.Anthropic(**kwargs)
         return self._client
 

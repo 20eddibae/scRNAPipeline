@@ -25,6 +25,8 @@ class QCStep(Step):
     needs = ("load",)
 
     def questions(self, adata: Any, state: RunState) -> dict[str, Question]:
+        if state.obs.get("pre_normalized"):
+            return {}  # the filtering decision was already made inside the store
         return {
             "stringency": ChoiceQ(
                 instructions=(
@@ -51,6 +53,12 @@ class QCStep(Step):
     def apply(
         self, adata: Any, state: RunState, choices: dict[str, Any]
     ) -> tuple[Any, dict[str, Any]]:
+        if state.obs.get("pre_normalized"):
+            # Mitochondrial fraction is a count ratio; on log1p values it is not
+            # the quantity the thresholds were chosen for. Skip, and say so.
+            return adata, {"status": "skipped",
+                           "reason": "store is pre-normalized and pre-filtered"}
+
         adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
         sc.pp.calculate_qc_metrics(
             adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True

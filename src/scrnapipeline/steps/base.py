@@ -30,12 +30,20 @@ class Step(ABC):
     ) -> tuple[Any, dict[str, Any]]:
         """Do the work. Returns (adata, summary)."""
 
-    def run(self, adata: Any, state: RunState, decider: Decider) -> Any:
+    def run(self, adata: Any, state: RunState, decider: Decider,
+            planner: Any = None) -> Any:
         started = time.time()
         questions = self.questions(adata, state)
+        framing = None
+        if questions and planner is not None:
+            # Claude reframes the generic question for this matrix; Jev answers it.
+            questions = planner.refine(self.name, questions, state)
+            framing = {name: q.instructions for name, q in questions.items()}
         choices: dict[str, Any] = {}
         if questions:
             for name, decision in decider.decide(self.name, questions, state).items():
+                decision.note = (decision.note + " | framed by claude").strip(" |") \
+                    if framing else decision.note
                 state.record_decision(decision)
                 choices[name] = decision.value
         try:
@@ -46,6 +54,8 @@ class Step(ABC):
             )
             raise
         summary = {**{k: _jsonable(v) for k, v in choices.items()}, **summary}
+        if framing:
+            summary["framing"] = framing
         state.record_step(
             StepRecord(self.name, "ok", round(time.time() - started, 2), summary)
         )
