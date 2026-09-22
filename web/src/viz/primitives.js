@@ -78,16 +78,19 @@ export function axes(root, { x, y, height, margin, xLabel, yLabel, ticks = 4 }) 
     x2: margin.left, y2: height - margin.bottom,
   }));
 
-  for (let i = 0; i <= ticks; i++) {
-    const t = i / ticks;
-    const xv = x.domain[0] + t * (x.domain[1] - x.domain[0]);
-    const yv = y.domain[0] + t * (y.domain[1] - y.domain[0]);
+  // Round-number ticks. Splitting the domain into equal parts put ticks at
+  // values like 0.0156 and 0.5, which printed as "0.03" beside "0.01" on evenly
+  // spaced ticks and as "0.50" for the first principal component.
+  const xs = niceTicks(x.domain, ticks), ys = niceTicks(y.domain, ticks);
+  for (const xv of xs.values) {
     g.appendChild(el("text", {
       class: "tick", x: x(xv), y: height - margin.bottom + 12, "text-anchor": "middle",
-    }, format(xv)));
+    }, xs.format(xv)));
+  }
+  for (const yv of ys.values) {
     g.appendChild(el("text", {
       class: "tick", x: margin.left - 6, y: y(yv) + 3, "text-anchor": "end",
-    }, format(yv)));
+    }, ys.format(yv)));
   }
 
   if (xLabel) {
@@ -105,6 +108,24 @@ export function axes(root, { x, y, height, margin, xLabel, yLabel, ticks = 4 }) 
   }
   root.appendChild(g);
   return g;
+}
+
+/** About `count` ticks at 1/2/5 x 10^k inside [lo, hi], with a formatter that
+ * shows as many decimals as the step needs and no more. */
+export function niceTicks([lo, hi], count = 4) {
+  const span = hi - lo;
+  if (!(span > 0) || !Number.isFinite(span)) return { values: [lo], format };
+  const raw = span / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [0.5, 1, 2, 5, 10].map((m) => m * mag)
+    .reduce((best, s) => (Math.abs(span / s - count) < Math.abs(span / best - count) ? s : best));
+  const values = [];
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + step * 1e-9; v += step) {
+    values.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  }
+  const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+  const fmt = (v) => (Math.abs(v) >= 10000 ? format(v) : v.toFixed(decimals));
+  return { values, format: fmt };
 }
 
 export function format(v) {

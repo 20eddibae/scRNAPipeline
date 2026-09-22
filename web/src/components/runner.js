@@ -5,7 +5,7 @@
 import { h } from "./dom.js";
 
 export function renderRunner(root, {
-  api, datasets, status, running, dataset, onDataset, onRun, onStop, onApi,
+  api, datasets, status, running, dataset, onDataset, onRun, onStop, onApi, onFollow,
 }) {
   const chosen = datasets.find((d) => d.name === dataset);
 
@@ -24,12 +24,13 @@ export function renderRunner(root, {
       ? h("button", { class: "control", onClick: onStop }, "Stop watching")
       : h("button", { class: "control primary", disabled: !api || !dataset, onClick: onRun }, "Run"),
     statusLine(status, api),
+    onFollow ? h("button", { class: "linklike", onClick: onFollow,
+      title: "you clicked away mid-run; go back to watching it live" }, "follow the run") : null,
     h("button", { class: "linklike", onClick: onApi, title: "change the backend URL" },
       api ? (api === "." ? "this server" : shorten(api)) : "connect a backend"),
     chosen?.blurb ? h("div", { class: "blurb", text: chosen.blurb }) : null,
     !api ? h("div", { class: "blurb", text:
-      "No backend is connected, so this is a saved run. To run the pipeline, start " +
-      "`uvicorn scrnapipeline.server:app --port 8000` and connect to it." }) : null,
+      "No backend connected. Run `uvicorn scrnapipeline.server:app --port 8000` to start one." }) : null,
   ));
 }
 

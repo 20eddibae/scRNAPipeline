@@ -158,8 +158,11 @@ export function pcaVariance(run) {
       x1: at, x2: at, y1: M.top, y2: height - M.bottom,
       style: "stroke:var(--threshold);stroke-width:1.5", "stroke-dasharray": "5 4",
     }));
+    // label on whichever side of the cut has room, so it is never clipped
+    const right = at > width * 0.65;
     root.appendChild(el("text", {
-      class: "label", x: at + 5, y: M.top + 10, style: "fill:var(--threshold)",
+      class: "label", x: right ? at - 5 : at + 5, y: M.top + 10, "text-anchor": right ? "end" : "start",
+      style: "fill:var(--threshold)",
     }, `${chosen} PCs used`));
   }
 

@@ -20,10 +20,13 @@ export function renderHeader(root, run, { onReplay } = {}) {
 }
 
 /** A one-line note about where the record came from, when it says anything. */
-export function renderBanner(root, run) {
-  const text = run?.provenance || (run?.demo
+export function renderBanner(root, run, { replay = false } = {}) {
+  let text = run?.provenance || (run?.demo
     ? "Demo record: an offline run where every decision took its declared default."
     : "");
+  // a saved record says how it was made; say too that this is a replay of it,
+  // so it is not taken for a run happening now
+  if (replay && run) text = `Replaying saved run ${run.runId}. ${text}`.trim();
   if (text) root.replaceChildren(h("div", { class: "banner-inner", text }));
   else root.replaceChildren();
 }

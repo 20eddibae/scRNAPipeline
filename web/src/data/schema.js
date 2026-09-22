@@ -101,6 +101,8 @@ export class Run {
 export class DecisionView {
   constructor(raw, run) {
     this.raw = raw ?? {};
+    this.runId = run.runId;
+    this.dataset = run.dataset;
     this.step = this.raw.step;
     this.question = this.raw.question;
     this.value = this.raw.value;

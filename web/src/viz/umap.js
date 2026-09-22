@@ -239,7 +239,16 @@ export function umapView(embedding, { initial = "label", height = 460 } = {}) {
   renderLegend();
 
   // size once attached, and again whenever the column changes width
-  const ro = new ResizeObserver(() => { layout(); draw(); });
+  // Redraw on the next frame, not inside the callback: laying out resizes the
+  // plot, which inside the callback is the "ResizeObserver loop" error. And
+  // stop observing once a new card has replaced this one.
+  let frame = 0, attached = false;
+  const ro = new ResizeObserver(() => {
+    if (plot.isConnected) attached = true;
+    else if (attached) { ro.disconnect(); return; }
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => { layout(); draw(); });
+  });
   ro.observe(plot);
 
   return root;

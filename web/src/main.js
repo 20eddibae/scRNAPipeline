@@ -2,9 +2,13 @@
  *
  * Two modes, same rendering path:
  *
- *   replay  a saved record is fetched and drawn all at once
+ *   replay  a saved record (`?run=`) is fetched and drawn all at once
  *   live    a backend streams a record after every step, and the page follows
  *           along, moving to whichever step just finished
+ *
+ * Only a step that has just finished in a live run plays its exchange (Claude
+ * typing the framing, Jev answering). Everything else - clicking back to a
+ * step, a saved record - renders finished.
  *
  * The run record is always the single source of truth; live mode just replaces
  * it more often. There is no client-side merging, so there is no way for the
@@ -19,6 +23,8 @@ import { renderStepCard } from "./components/step-card.js";
 import { renderStepper } from "./components/stepper.js";
 import { OVERVIEW, STEPS, STEP_INDEX } from "./steps/spec.js";
 import { h } from "./components/dom.js";
+import { resumeAnimations } from "./components/typewriter.js";
+import { setFeedbackBackend } from "./components/whatif.js";
 
 const API_SLOT = "krino.api";  // localStorage slot, not a credential
 const OLD_API_SLOT = "scrnapipeline.api";  // pre-rename slot, read once so a saved URL survives
@@ -42,15 +48,20 @@ const ui = {
   running: null,      // step currently executing, or null
   abort: null,        // stops reading the live stream
   replayTimer: null,
+  follow: Promise.resolve(),  // the live view's queue of steps to show, in order
+  gen: 0,             // bumped per run, so a stopped run's queued views are dropped
+  pinned: false,      // the viewer clicked somewhere mid-run: stop moving the view
+  shown: null,        // the last step the live view put on screen
 };
 
 async function boot() {
   ui.active = viewFromHash();
 
-  // With a backend, start blank: the page fills in from the run you start, not
-  // from the bundled record. `?run=` still loads a saved record on purpose.
+  // Start blank: the page fills in from the run you start, never from the
+  // bundled record - with or without a backend. `?run=` still loads a saved
+  // record on purpose.
   await connect();
-  if (ui.live && sourceFromLocation().kind === "bundled") {
+  if (sourceFromLocation().kind === "bundled") {
     ui.active = OVERVIEW;
     drawChrome();
     showEmpty();
@@ -84,6 +95,7 @@ async function connect() {
     ui.status = info ? { text: info.guarded ? "ready · token required" : "ready" }
                      : { error: "backend not reachable" };
     ui.live = Boolean(info);
+    setFeedbackBackend(ui.live ? ui.api : null, tokenFromLocation());
     ui.datasets = await fetchDatasets(ui.api);
     if (!ui.dataset && ui.datasets.length) ui.dataset = ui.datasets[0].name;
   } catch (err) {
@@ -113,6 +125,11 @@ function promptForApi() {
 function startRun() {
   if (ui.abort) ui.abort();
   stopReplay();
+  ui.gen += 1;
+  ui.follow = Promise.resolve();
+  ui.pinned = false;
+  ui.shown = null;
+  renderStepCard(els.detail, null);  // stops whatever card was playing
 
   ui.running = null;
   ui.run = null;  // each run starts from a blank page, not the previous record
@@ -133,6 +150,7 @@ function startRun() {
 function stopRun() {
   if (ui.abort) ui.abort();
   ui.abort = null;
+  ui.gen += 1;
   ui.running = null;
   // The run itself carries on server-side; say that rather than imply it stopped.
   ui.status = { text: "stopped watching · the run continues on the backend" };
@@ -141,23 +159,29 @@ function stopRun() {
 }
 
 function handleEvent(event) {
+  // The record, the status line and the rail follow the stream at once; the
+  // detail pane is queued, so a step's exchange finishes playing before the
+  // view moves on to the next one.
+  const gen = ui.gen;
   switch (event.type) {
     case "start":
       ui.status = { running: true, text: `run ${event.run_id}` };
       ui.running = null;
-      select(STEPS[0].name, { quiet: true });
       break;
 
     case "step_start":
       ui.running = event.step;
       ui.status = { running: true, text: `running ${event.step}` };
-      select(event.step, { quiet: true });
+      // if it has already finished by the time the queue gets here, its
+      // step_done entry shows it instead
+      if (!ui.pinned) follow(gen, () => (ui.running === event.step ? show(event.step) : null));
       break;
 
     case "step_done":
       ui.running = null;
       if (event.run) ui.run = event.run;
-      select(event.step, { quiet: true });
+      ui.shown = event.step;
+      if (!ui.pinned) follow(gen, () => show(event.step, { animate: true }));
       break;
 
     case "done":
@@ -165,14 +189,16 @@ function handleEvent(event) {
       ui.abort = null;
       if (event.run) ui.run = event.run;
       ui.status = { text: `finished in ${event.seconds}s` };
-      select(OVERVIEW, { quiet: true });
+      if (!ui.pinned) follow(gen, () => show(OVERVIEW));
       break;
 
     case "error":
       ui.running = null;
       ui.abort = null;
+      ui.gen += 1;  // the error is shown now, not after the queue drains
       if (event.run) ui.run = event.run;
       ui.status = { error: truncate(event.message) };
+      drawChrome();
       if (ui.run) draw();
       else showMessage("The run failed", event.message);
       return;
@@ -181,8 +207,25 @@ function handleEvent(event) {
       return;
   }
   drawChrome();
-  if (ui.run) draw();
-  else showEmpty(ui.running ? `running ${ui.running}…` : "starting…");
+  drawRail();
+}
+
+/** Queue a live view change behind whatever is playing now. */
+function follow(gen, fn) {
+  ui.follow = ui.follow
+    .then(() => (gen === ui.gen ? fn() : null))
+    .catch((err) => console.error(err));
+}
+
+/** Put one view on screen for the live run. Resolves when it has played. */
+function show(name, { animate = false } = {}) {
+  ui.active = name;
+  window.history.replaceState(null, "", `#${name}`);
+  if (!ui.run) {
+    showEmpty(ui.running ? `running ${ui.running}…` : "starting…");
+    return null;
+  }
+  return draw({ animate });
 }
 
 /* -- rendering ----------------------------------------------------------- */
@@ -190,7 +233,7 @@ function handleEvent(event) {
 function drawChrome() {
   if (ui.run) {
     renderHeader(els.topbar, ui.run, { onReplay: ui.api ? null : toggleReplay });
-    renderBanner(els.banner, ui.run);
+    renderBanner(els.banner, ui.run, { replay: !ui.abort && !ui.run.provenance?.startsWith("Live run, streamed") });
   } else {
     renderHeader(els.topbar, null);
     els.banner.replaceChildren();
@@ -205,46 +248,73 @@ function drawChrome() {
     onRun: startRun,
     onStop: stopRun,
     onApi: promptForApi,
+    onFollow: ui.abort && ui.pinned ? resumeFollow : null,
   });
 }
 
-function draw() {
-  if (!ui.run) return;
+function drawRail() {
   renderStepper(els.rail, ui.run, {
-    active: ui.active, running: ui.running, onSelect: select,
+    active: ui.run ? ui.active : null, running: ui.running, onSelect: pick,
   });
-  if (ui.active === OVERVIEW) renderOverview(els.detail, ui.run, { onSelect: select });
-  else renderStepCard(els.detail, ui.run, ui.active, STEP_INDEX[ui.active] ?? 0,
-                      { running: ui.running === ui.active });
+}
+
+/** Redraw the rail and the active view. Only the live stream passes
+ * `animate`; a click, a hash change or a saved record renders finished. */
+function draw({ animate = false } = {}) {
+  if (!ui.run) return Promise.resolve();
+  drawRail();
+  if (ui.active === OVERVIEW) {
+    renderStepCard(els.detail, null);  // stops whatever card was playing
+    renderOverview(els.detail, ui.run, { onSelect: pick });
+    return Promise.resolve();
+  }
+  return renderStepCard(els.detail, ui.run, ui.active, STEP_INDEX[ui.active] ?? 0,
+                        { running: ui.running === ui.active, animate });
+}
+
+/** A click by the viewer. It wins over everything automatic: the step-through
+ * stops, and during a live run the view stays where they put it (queued views
+ * are dropped) until they ask to follow the run again. */
+function pick(name) {
+  stopReplay();
+  if (ui.abort && !ui.pinned) {
+    ui.pinned = true;
+    ui.gen += 1;
+    ui.follow = Promise.resolve();
+    drawChrome();
+  }
+  select(name);
+}
+
+/** Back to following the live run from wherever it has got to. */
+function resumeFollow() {
+  ui.pinned = false;
+  drawChrome();
+  select(ui.running ?? ui.shown ?? OVERVIEW);
 }
 
 function select(name, { quiet = false } = {}) {
   ui.active = name;
   window.history.replaceState(null, "", `#${name}`);
-  if (!quiet) { draw(); els.detail.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  if (!quiet) {
+    const played = draw();
+    els.rail.scrollIntoView({ behavior: "smooth", block: "start" });
+    return played;
+  }
+  return Promise.resolve();
 }
 
 /** The blank state: no record yet, only the step list and what to do. */
 function showEmpty(progress = null) {
-  const item = (step, i) => {
-    const live = step.name === ui.running;
-    return h("li", {},
-      h("div", { class: `rail-item ${live ? "active" : "pending"}` },
-        h("span", { class: "rail-mark", text: live ? "●" : "○" }),
-        h("span", {},
-          h("span", { class: "rail-name", text: `${i + 1}. ${step.title}` }),
-          h("span", { class: "rail-who", text: live ? "running…" : "" }),
-        ),
-      ),
-    );
-  };
-  els.rail.replaceChildren(h("ol", { class: "rail-list" }, STEPS.map(item)));
+  renderStepper(els.rail, null, { active: null, running: ui.running, onSelect: pick });
   els.detail.replaceChildren(h("section", { class: "card" },
     h("div", { class: "card-head" }, h("h2", { text: progress ? "Running" : "Nothing has run yet" })),
     h("div", { class: "card-body" },
       h("p", { class: "lede", text: progress
-        ? `${progress[0].toUpperCase()}${progress.slice(1)} Each step appears on the left as it finishes.`
-        : "Choose a dataset and press Run. Each step appears on the left as it finishes." }),
+        ? `${progress[0].toUpperCase()}${progress.slice(1)} Each step lights up above as it finishes.`
+        : ui.live
+          ? "Choose a dataset and press Run. Each step lights up above as it finishes."
+          : "No backend is connected. Connect one, then choose a dataset and press Run." }),
     ),
   ));
 }
@@ -265,19 +335,25 @@ function showMessage(title, body) {
 
 function toggleReplay() {
   if (ui.replayTimer) { stopReplay(); return; }
-  let i = 0;
-  select(STEPS[0].name);
-  ui.replayTimer = setInterval(() => {
-    i += 1;
-    if (i >= STEPS.length) { stopReplay(); return; }
-    select(STEPS[i].name);
-  }, 2600);
+  resumeAnimations();
+  const walk = { stopped: false };
+  ui.replayTimer = walk;
+  (async () => {
+    for (const step of STEPS) {
+      if (walk.stopped) return;
+      await select(step.name);
+      await pause(1800);  // a beat to look at the figures before moving on
+    }
+    if (!walk.stopped) { ui.replayTimer = null; select(OVERVIEW); }
+  })();
 }
 
 function stopReplay() {
-  if (ui.replayTimer) clearInterval(ui.replayTimer);
+  if (ui.replayTimer) ui.replayTimer.stopped = true;
   ui.replayTimer = null;
 }
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* -- odds and ends ------------------------------------------------------- */
 
@@ -312,7 +388,7 @@ function truncate(text) {
 
 window.addEventListener("hashchange", () => {
   const name = viewFromHash();
-  if (name !== ui.active) { ui.active = name; draw(); }
+  if (name !== ui.active) pick(name);
 });
 
 boot();
