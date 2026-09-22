@@ -57,15 +57,29 @@ def main() -> int:
               f" conf={info['confidence']}  truth={top_true}")
         print(f"            markers: {', '.join(info['markers'])}")
 
+    # There are TWO abstention channels and they mean opposite things:
+    #
+    #   explicit "Unclear" at HIGH confidence -> "I am sure this is none of your
+    #       options". The vocabulary or the evidence is wrong.
+    #   low confidence over real options      -> "I am torn between two types".
+    #       The evidence is ambiguous between things the vocabulary knows.
+    #
+    # Thresholding on confidence alone conflates them, and worse, lets a
+    # confident "Unclear" count as a covered cell while carrying a useless
+    # label. Coverage means *usable label*, so it must exclude both.
     print("\n=== risk-coverage ===")
-    print(f"  {'floor':>6s} {'coverage':>9s} {'n_labelled':>11s} {'matched_acc':>12s}")
+    print(f"  {'floor':>6s} {'coverage':>9s} {'n_labelled':>11s} {'matched_acc':>12s}"
+          f" {'abstain_lowconf':>16s} {'abstain_unclear':>16s}")
     curve = []
     for floor in THRESHOLDS:
-        keep = np.array([
+        confident = np.array([
             (per_cluster[c]["confidence"] is None)
             or (per_cluster[c]["confidence"] >= floor)
             for c in clusters
         ])
+        in_vocabulary = np.array([per_cluster[c]["label"] != "Unclear"
+                                  for c in clusters])
+        keep = confident & in_vocabulary
         coverage = float(keep.mean())
         if keep.sum() < 20:
             row = {"floor": floor, "coverage": round(coverage, 4),
@@ -75,9 +89,13 @@ def main() -> int:
             row = {"floor": floor, "coverage": round(coverage, 4),
                    "n_labelled": int(keep.sum()),
                    "matched_accuracy": _matched_accuracy(predicted, truth[keep])}
+        row["abstain_low_confidence"] = int((~confident).sum())
+        row["abstain_out_of_vocabulary"] = int((confident & ~in_vocabulary).sum())
         curve.append(row)
         print(f"  {floor:6.2f} {row['coverage']:9.3f} {row['n_labelled']:11d}"
-              f" {str(row['matched_accuracy']):>12s}")
+              f" {str(row['matched_accuracy']):>12s}"
+              f" {row['abstain_low_confidence']:16d}"
+              f" {row['abstain_out_of_vocabulary']:16d}")
 
     report = {
         "per_cluster": per_cluster,

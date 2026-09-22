@@ -193,9 +193,59 @@ def _cluster_names(markers: dict[str, list[str]]) -> dict[str, str]:
     return {cluster: f"cluster_{cluster}" for cluster in markers}
 
 
-def _top_markers(adata: Any, n: int = 10) -> dict[str, list[str]]:
+# Ribosomal and mitochondrial genes win differential-expression tests for the
+# largest cluster and identify nothing. pbmc3k's 805-cell naive-CD4 cluster came
+# back as RPS12, RPS27, RPS6, RPS25, RPL32 -- a list from which no annotator,
+# model or human, could name a cell type. Dropping them is not cosmetic: it is
+# the difference between asking a question and asking an unanswerable one.
+UNINFORMATIVE = ("RPS", "RPL", "MT-", "MTRNR", "MALAT1", "EEF1", "TMSB")
+
+
+def _top_markers(adata: Any, n: int = 10, drop_uninformative: bool = True
+                 ) -> dict[str, list[str]]:
     names = adata.uns["rank_genes_groups"]["names"]
-    return {group: [str(g) for g in names[group][:n]] for group in names.dtype.names}
+    out: dict[str, list[str]] = {}
+    for group in names.dtype.names:
+        genes = [str(g) for g in names[group]]
+        if drop_uninformative:
+            kept = [g for g in genes if not g.upper().startswith(UNINFORMATIVE)]
+            # If a cluster is *nothing but* housekeeping genes, say so by leaving
+            # the list short rather than backfilling it with more of the same.
+            genes = kept if kept else genes
+        out[group] = genes[:n]
+    return out
+
+
+# Asked only of clusters the model could not resolve. Canonical lineage markers,
+# so the follow-up question is targeted rather than "here are more genes".
+DISAMBIGUATION_PANEL = (
+    "CD3D", "CD3E", "CD2",           # T lineage -- the CD8-vs-NK discriminator
+    "CD4", "IL7R", "CCR7",           # CD4 helper
+    "CD8A", "CD8B",                  # CD8 cytotoxic
+    "NKG7", "GNLY", "KLRD1",         # cytotoxic, NK-leaning
+    "MS4A1", "CD79A",                # B
+    "CD14", "FCGR3A", "LYZ",         # myeloid
+    "FCER1A", "PPBP",                # DC, platelet
+)
+
+
+def _panel_expression(adata: Any, cluster: str) -> dict[str, float]:
+    """Mean expression of the canonical panel inside one cluster.
+
+    The full gene set lives on `adata.raw`; `adata.X` has been subset to HVGs
+    and scaled by this point, so CD3D may not even be present there.
+    """
+    import numpy as np
+
+    source = adata.raw.to_adata() if adata.raw is not None else adata
+    in_cluster = (adata.obs["leiden"] == cluster).to_numpy()
+    present = [g for g in DISAMBIGUATION_PANEL if g in source.var_names]
+    if not present or not in_cluster.any():
+        return {}
+
+    block = source[in_cluster, present].X
+    means = np.asarray(block.mean(axis=0)).ravel()
+    return {gene: round(float(value), 3) for gene, value in zip(present, means)}
 
 
 def _strip_fence(text: str) -> str:
@@ -223,7 +273,8 @@ PBMC_VOCABULARY = {
 
 
 def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
-                  context: str, abstain_below: float | None = None):
+                  context: str, abstain_below: float | None = None,
+                  retry_with_evidence: bool = True):
     """Ask Jev, per cluster, which cell type the marker genes indicate.
 
     One call per cluster rather than one per run. The probabilities are kept on
@@ -239,30 +290,70 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
     decider = JevDecider(settings)
     floor = settings.confidence_floor if abstain_below is None else abstain_below
 
-    per_cluster: dict[str, dict[str, Any]] = {}
-    for cluster, genes in markers.items():
-        size = int((adata.obs["leiden"] == cluster).sum())
+    def ask(cluster: str, size: int, genes: list[str],
+            panel: dict[str, float] | None = None):
         state = RunState(f"annotate-{cluster}", context)
         state.observe(tissue=context, cluster=cluster, n_cells_in_cluster=size,
                       top_markers=genes)
-        decision = decider.decide(
+        extra = ""
+        if panel:
+            state.observe(canonical_marker_expression=panel)
+            extra = (" You are also given mean expression of a canonical lineage "
+                     "panel within this cluster; use it to break ties that the "
+                     "ranked markers alone cannot settle (CD3 presence separates "
+                     "cytotoxic T cells from NK cells, for instance).")
+        return decider.decide(
             "annotate_cluster",
             {"cell_type": ChoiceQ(
                 instructions=(
                     f"These are the genes most enriched in cluster {cluster} "
                     f"({size} cells) of a {context} sample, ranked by "
-                    "differential expression against all other clusters. Which "
-                    "cell type do they indicate?"
+                    f"differential expression against all other clusters.{extra} "
+                    "Which cell type do they indicate?"
                 ),
                 criteria=PBMC_VOCABULARY,
                 default="Unclear")},
             state,
         )["cell_type"]
+
+    per_cluster: dict[str, dict[str, Any]] = {}
+    for cluster, genes in markers.items():
+        size = int((adata.obs["leiden"] == cluster).sum())
+        decision = ask(cluster, size, genes)
+        attempts = 1
+        resolved_by = "ranked markers"
+
+        # The abstention-triggered evidence loop. An unresolved answer is not a
+        # dead end, it is a request: the model has told us the ranked markers do
+        # not settle this cluster, so fetch the evidence that would and ask once
+        # more. One extra call, only for the clusters that need it.
+        unresolved = (decision.value == "Unclear"
+                      or (decision.confidence is not None
+                          and decision.confidence < floor))
+        if unresolved and retry_with_evidence:
+            panel = _panel_expression(adata, cluster)
+            if panel:
+                retried = ask(cluster, size, genes, panel=panel)
+                attempts = 2
+                # Keep the retry only when it resolved something. An abstention
+                # answered with a real type is progress; a low-confidence guess
+                # is only worth replacing with a more confident one.
+                if retried.value == "Unclear":
+                    resolved_by = "unresolved after panel"
+                elif decision.value == "Unclear":
+                    decision, resolved_by = retried, "canonical panel"
+                elif (retried.confidence or 0) > (decision.confidence or 0):
+                    decision, resolved_by = retried, "canonical panel"
+                else:
+                    resolved_by = "panel did not improve on ranked markers"
+
         per_cluster[cluster] = {
             "label": decision.value,
             "confidence": decision.confidence,
             "probabilities": decision.raw.get("probabilities"),
             "markers": genes[:5],
+            "attempts": attempts,
+            "resolved_by": resolved_by,
         }
 
     adata.uns["jev_annotation"] = per_cluster
@@ -273,4 +364,8 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
         for cluster, info in per_cluster.items()
     }
     n_abstained = sum(1 for v in labels.values() if v == "Unclear")
-    return labels, None, f"jev_markers (floor {floor:.2f}, {n_abstained} abstained)"
+    n_retried = sum(1 for i in per_cluster.values() if i["attempts"] > 1)
+    n_rescued = sum(1 for i in per_cluster.values()
+                    if i["resolved_by"] == "canonical panel")
+    return labels, None, (f"jev_markers (floor {floor:.2f}, {n_abstained} abstained, "
+                          f"{n_retried} retried, {n_rescued} rescued by panel)")
