@@ -26,13 +26,22 @@ def _flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# TypeSafe clients reach Jev through the Vercel AI Gateway at this base; the SDK
+# appends /v1/systemone. The Vercel key doubles as the TypeSafe key.
+VERCEL_TYPESAFE_BASE = "https://ai-gateway.vercel.sh/typesafe"
+
+
 @dataclass
 class Settings:
+    # A gateway key is NOT an Anthropic key. Fall back to it only when a base URL
+    # says a gateway is deliberately in the path -- otherwise a `vck_...` key
+    # would be sent to api.anthropic.com and come back as a bare 401.
     anthropic_api_key: str | None = field(
-        default_factory=lambda: _env("ANTHROPIC_API_KEY", "AI_GATEWAY_API_KEY")
+        default_factory=lambda: _env("ANTHROPIC_API_KEY")
+        or (_env("AI_GATEWAY_API_KEY") if _env("ANTHROPIC_BASE_URL") else None)
     )
     anthropic_base_url: str | None = field(
-        default_factory=lambda: _env("ANTHROPIC_BASE_URL", "AI_GATEWAY_BASE_URL")
+        default_factory=lambda: _env("ANTHROPIC_BASE_URL")
     )
     claude_model: str = field(
         default_factory=lambda: _env("CLAUDE_MODEL", default="claude-opus-5")
@@ -44,11 +53,12 @@ class Settings:
         default_factory=lambda: _flag("CLAUDE_SERVER_FALLBACKS", False)
     )
 
+    # The Vercel gateway key is the TypeSafe key, so this fallback is correct.
     typesafe_api_key: str | None = field(
         default_factory=lambda: _env("TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY")
     )
     typesafe_base_url: str | None = field(
-        default_factory=lambda: _env("TYPESAFE_BASE_URL", "AI_GATEWAY_BASE_URL")
+        default_factory=lambda: _env("TYPESAFE_BASE_URL", default=VERCEL_TYPESAFE_BASE)
     )
     jev_model: str = field(default_factory=lambda: _env("JEV_MODEL", default="jev-latest"))
 
@@ -73,8 +83,9 @@ class Settings:
     def require_anthropic(self) -> str:
         if not self.anthropic_api_key:
             raise RuntimeError(
-                "No Anthropic credential. Set ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY, "
-                "or run with CLAUDE_OFFLINE=1."
+                "No Anthropic credential. Set ANTHROPIC_API_KEY (or AI_GATEWAY_API_KEY "
+                "together with ANTHROPIC_BASE_URL to route through a gateway), or run "
+                "with CLAUDE_OFFLINE=1."
             )
         return self.anthropic_api_key
 

@@ -79,7 +79,10 @@ python -m scrnapipeline.cli run --dataset pbmc3k --mode agent
 On Modal:
 
 ```bash
-modal secret create ai-gateway AI_GATEWAY_API_KEY=...
+# Put the keys in a mode-600 file OUTSIDE any repo, then hand that file to Modal.
+# --from-dotenv keeps them off the command line, where `ps` would expose them to
+# anyone else on a shared machine.
+modal secret create ai-gateway --from-dotenv ~/.config/modal-hackathon/ai-gateway.env
 modal run modal_app.py --dataset pbmc3k --mode agent
 ```
 
@@ -98,8 +101,14 @@ record.** The layout:
   to that file and is gitignored
 - on Modal they live in the `ai-gateway` Modal secret and reach the container as
   an environment variable
-- `AI_GATEWAY_API_KEY` backs both providers; `ANTHROPIC_API_KEY` /
-  `TYPESAFE_API_KEY` override it per provider if you have separate keys
+- Jev is reached through the **Vercel AI Gateway**: the Vercel `vck_...` key *is*
+  the TypeSafe key, and the base URL is `https://ai-gateway.vercel.sh/typesafe`
+  (the SDK appends `/v1/systemone`). So `AI_GATEWAY_API_KEY` is a correct
+  fallback for `TYPESAFE_API_KEY`.
+- It is **not** a correct fallback for Claude. A gateway key sent to
+  `api.anthropic.com` comes back as a bare 401 that looks like a broken key, so
+  `AI_GATEWAY_API_KEY` is only used for Claude when `ANTHROPIC_BASE_URL` is also
+  set — i.e. when a gateway is deliberately in the path.
 - `scripts/scan_secrets.py` is key-anchored, not value-anchored — it trips on any
   `*_API_KEY`/`_TOKEN`/`_SECRET` assigned a literal, not just on key prefixes
   someone thought to list
