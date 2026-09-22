@@ -15,6 +15,11 @@ export const motionOff = () =>
 export function hasPlayed(id) { return played.has(id) || motionOff(); }
 export function markPlayed(id) { played.add(id); }
 
+/** Each press of Run is a first generation of its own. Keys carry the run id,
+ * and a replayed recording carries the same id every time - so without this,
+ * the second replay found every decision "already played" and typed nothing. */
+export function resetPlayed() { played.clear(); }
+
 /** Finish every animation on the page now, and skip the ones to come. */
 export function skipAnimations() { skipAll = true; for (const f of finishers) f(); finishers.clear(); }
 export function resumeAnimations() { skipAll = false; }

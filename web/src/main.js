@@ -23,7 +23,7 @@ import { renderStepCard } from "./components/step-card.js";
 import { renderStepper } from "./components/stepper.js";
 import { OVERVIEW, STEPS, STEP_INDEX } from "./steps/spec.js";
 import { h } from "./components/dom.js";
-import { resumeAnimations } from "./components/typewriter.js";
+import { resetPlayed, resumeAnimations } from "./components/typewriter.js";
 import { setFeedbackBackend } from "./components/whatif.js";
 
 const API_SLOT = "krino.api";  // localStorage slot, not a credential
@@ -52,6 +52,8 @@ const ui = {
   gen: 0,             // bumped per run, so a stopped run's queued views are dropped
   pinned: false,      // the viewer clicked somewhere mid-run: stop moving the view
   shown: null,        // the last step the live view put on screen
+  revealed: null,     // steps the live view has shown; null = show the record as it is
+  viewStatus: null,   // the status line while the live view trails the stream
 };
 
 async function boot() {
@@ -129,6 +131,9 @@ function startRun() {
   ui.follow = Promise.resolve();
   ui.pinned = false;
   ui.shown = null;
+  ui.revealed = new Set();
+  ui.viewStatus = null;
+  resetPlayed();
   renderStepCard(els.detail, null);  // stops whatever card was playing
 
   ui.running = null;
@@ -151,6 +156,7 @@ function stopRun() {
   if (ui.abort) ui.abort();
   ui.abort = null;
   ui.gen += 1;
+  ui.revealed = null;
   ui.running = null;
   // The run itself carries on server-side; say that rather than imply it stopped.
   ui.status = { text: "stopped watching · the run continues on the backend" };
@@ -181,7 +187,19 @@ function handleEvent(event) {
       ui.running = null;
       if (event.run) ui.run = event.run;
       ui.shown = event.step;
-      if (!ui.pinned) follow(gen, () => show(event.step, { animate: true }));
+      // then a beat on screen, so a step with nothing to type (load,
+      // integrate, evaluate) is seen rather than replaced at once - a replay
+      // delivers a finished step every ~1 s
+      if (!ui.pinned) {
+        const step = event.step;
+        follow(gen, async () => {
+          ui.revealed?.add(step);
+          ui.viewStatus = { running: true, text: `step ${STEP_INDEX[step] + 1} of ${STEPS.length} · ${step}` };
+          drawChrome();
+          await show(step, { animate: true });
+          await pause(DWELL_MS);
+        });
+      }
       break;
 
     case "done":
@@ -189,12 +207,19 @@ function handleEvent(event) {
       ui.abort = null;
       if (event.run) ui.run = event.run;
       ui.status = { text: `finished in ${event.seconds}s` };
-      if (!ui.pinned) follow(gen, () => show(OVERVIEW));
+      if (!ui.pinned) {
+        follow(gen, () => {
+          ui.revealed = null;  // the view has caught up: the rail is the record again
+          drawChrome();
+          return show(OVERVIEW);
+        });
+      }
       break;
 
     case "error":
       ui.running = null;
       ui.abort = null;
+      ui.revealed = null;
       ui.gen += 1;  // the error is shown now, not after the queue drains
       if (event.run) ui.run = event.run;
       ui.status = { error: truncate(event.message) };
@@ -242,7 +267,7 @@ function drawChrome() {
     api: ui.api,
     datasets: ui.datasets,
     dataset: ui.dataset,
-    status: ui.status,
+    status: ui.revealed && ui.viewStatus ? ui.viewStatus : ui.status,
     running: Boolean(ui.abort),
     onDataset: (name) => { ui.dataset = name; drawChrome(); },
     onRun: startRun,
@@ -253,8 +278,13 @@ function drawChrome() {
 }
 
 function drawRail() {
+  // While the live view trails the stream, the step "running" on the rail is
+  // the next one the view will show, not the one the backend is on.
+  const running = ui.revealed
+    ? STEPS.map((s) => s.name).find((name) => !ui.revealed.has(name)) ?? null
+    : ui.running;
   renderStepper(els.rail, ui.run, {
-    active: ui.run ? ui.active : null, running: ui.running, onSelect: pick,
+    active: ui.run ? ui.active : null, running, onSelect: pick, reveal: ui.revealed,
   });
 }
 
@@ -282,6 +312,7 @@ function pick(name) {
   // queue kept moving the view after the viewer had clicked somewhere else.
   ui.gen += 1;
   ui.follow = Promise.resolve();
+  if (ui.revealed) { ui.revealed = null; drawChrome(); }  // a click shows the record as it is
   if (ui.abort && !ui.pinned) {
     ui.pinned = true;
     drawChrome();
@@ -357,6 +388,7 @@ function stopReplay() {
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DWELL_MS = 1500;  // how long the live view holds a finished step
 
 /* -- odds and ends ------------------------------------------------------- */
 

@@ -21,14 +21,19 @@ const WHO = {
  * and mouseup straddled a redraw landed on a detached node and did nothing.
  * `onSelect` is read at click time, so the latest handler always wins.
  */
-export function renderStepper(root, run, { active, running, onSelect }) {
+export function renderStepper(root, run, { active, running, onSelect, reveal = null }) {
   const entries = run ? run.timeline()
     : STEPS.map((spec) => ({ spec, status: "pending", record: null, decisions: [] }));
   const rail = root._rail ?? build(root);
   rail.onSelect = onSelect;
 
   entries.forEach((entry, i) => {
-    const { spec, status, record, decisions } = entry;
+    const { spec, record } = entry;
+    // `reveal`: the live view is showing the run step by step, and a step it
+    // has not reached yet stays grey even if the stream already finished it
+    const hidden = reveal && !reveal.has(spec.name);
+    const status = hidden ? "pending" : entry.status;
+    const decisions = hidden ? [] : entry.decisions;
     const el = rail.steps.get(spec.name);
     if (!el) return;
     const live = spec.name === running;
@@ -42,7 +47,9 @@ export function renderStepper(root, run, { active, running, onSelect }) {
 
     el.li.className = `pipe-step ${state}`;
     setCurrent(el.button, spec.name === active);
-    el.button.disabled = !run || (status === "pending" && !live);
+    // clickable whenever the record has the step, even while the live view
+    // still shows it grey: a click jumps there and shows the record as it is
+    el.button.disabled = !run || (entry.status === "pending" && !live);
     el.dot.textContent = live ? "" : MARK[status] ?? String(i + 1);
     el.who.className = `pipe-who ${who.cls}`.trim();
     el.who.textContent = tag;
