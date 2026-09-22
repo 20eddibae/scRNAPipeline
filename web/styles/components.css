@@ -49,6 +49,8 @@ button.chip[disabled] { opacity: 0.45; cursor: default; }
 .rail-item.done .rail-num { border-color: var(--ok); color: var(--ok); }
 .rail-item.error .rail-num { border-color: var(--err); color: var(--err); }
 .rail-item.pending { opacity: 0.55; }
+/* a step that has not run: grey, and nothing drawn from the step's definition */
+.card.pending, .option.pending { opacity: 0.5; filter: grayscale(1); }
 .rail-name { font-size: 13px; font-family: var(--mono); }
 .rail-who { font-size: 11px; color: var(--text-faint); }
 

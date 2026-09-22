@@ -36,7 +36,9 @@ export function renderStepper(root, run, { active, running, onSelect }) {
         h("span", { class: "rail-who", style: "display:block",
           text: live
             ? "running…"
-            : decisions.length
+            : status === "pending"
+              ? ""
+              : decisions.length
               ? `${decisions.length} decision${decisions.length > 1 ? "s" : ""} · ${WHO[spec.decidedBy]}`
               : WHO[spec.decidedBy] }),
       ),

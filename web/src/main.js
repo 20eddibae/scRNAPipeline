@@ -19,6 +19,7 @@ import { renderStepCard } from "./components/step-card.js";
 import { renderStepper } from "./components/stepper.js";
 import { OVERVIEW, STEPS, STEP_INDEX } from "./steps/spec.js";
 import { h } from "./components/dom.js";
+import { APP } from "./config.js";
 
 const API_SLOT = "krino.api";  // localStorage slot, not a credential
 const OLD_API_SLOT = "scrnapipeline.api";  // pre-rename slot, read once so a saved URL survives
@@ -35,6 +36,7 @@ const ui = {
   run: null,          // the current record, wrapped
   active: OVERVIEW,   // which view is on screen
   api: apiFromLocation() || remembered(),
+  live: false,        // a backend answered /health
   datasets: [],
   dataset: "",
   status: null,       // {text, running, error}
@@ -46,6 +48,16 @@ const ui = {
 async function boot() {
   ui.active = viewFromHash();
 
+  // With a backend, start blank: the page fills in from the run you start, not
+  // from the bundled record. `?run=` still loads a saved record on purpose.
+  await connect();
+  if (ui.live && sourceFromLocation().kind === "bundled") {
+    ui.active = OVERVIEW;
+    drawChrome();
+    showEmpty();
+    return;
+  }
+
   try {
     ui.run = await loadRun(sourceFromLocation());
   } catch (err) {
@@ -56,21 +68,28 @@ async function boot() {
 
   drawChrome();
   if (ui.run) draw();
-  connect();
 }
 
 /* -- backend ------------------------------------------------------------- */
 
 async function connect() {
-  if (!ui.api) { drawChrome(); return; }
+  if (!ui.api) {
+    // Modal (and uvicorn locally) serve the page from its own backend, so try
+    // the page's origin before settling for replay. A static host 404s here.
+    const own = await health(".").catch(() => null);
+    if (!own) { drawChrome(); return; }
+    ui.api = ".";
+  }
   try {
     const info = await health(ui.api);
     ui.status = info ? { text: info.guarded ? "ready · token required" : "ready" }
                      : { error: "backend not reachable" };
+    ui.live = Boolean(info);
     ui.datasets = await fetchDatasets(ui.api);
     if (!ui.dataset && ui.datasets.length) ui.dataset = ui.datasets[0].name;
   } catch (err) {
     ui.status = { error: `backend not reachable` };
+    ui.live = false;
     ui.datasets = [];
   }
   drawChrome();
@@ -97,8 +116,11 @@ function startRun() {
   stopReplay();
 
   ui.running = null;
+  ui.run = null;  // each run starts from a blank page, not the previous record
+  ui.active = OVERVIEW;
   ui.status = { running: true, text: "starting…" };
   drawChrome();
+  showEmpty("starting…");
 
   const pass = tokenFromLocation();
   ui.abort = runLive({
@@ -160,7 +182,8 @@ function handleEvent(event) {
       return;
   }
   drawChrome();
-  draw();
+  if (ui.run) draw();
+  else showEmpty(ui.running ? `running ${ui.running}…` : "starting…");
 }
 
 /* -- rendering ----------------------------------------------------------- */
@@ -169,6 +192,12 @@ function drawChrome() {
   if (ui.run) {
     renderHeader(els.topbar, ui.run, { onReplay: ui.api ? null : toggleReplay });
     renderBanner(els.banner, ui.run);
+  } else {
+    els.topbar.replaceChildren(h("div", { class: "topbar-inner" },
+      h("div", { class: "brand" },
+        h("h1", { text: APP.title }),
+        h("span", { class: "sub", text: APP.tagline }))));
+    els.banner.replaceChildren();
   }
   renderRunner(els.runner, {
     api: ui.api,
@@ -197,6 +226,35 @@ function select(name, { quiet = false } = {}) {
   ui.active = name;
   window.history.replaceState(null, "", `#${name}`);
   if (!quiet) { draw(); els.detail.scrollIntoView({ behavior: "smooth", block: "start" }); }
+}
+
+/** The blank state: no record yet, only the step list and what to do. */
+function showEmpty(progress = null) {
+  const item = (step, i) => {
+    const live = step.name === ui.running;
+    return h("li", {},
+      h("div", { class: `rail-item pending${live ? " active" : ""}` },
+        h("span", { class: "rail-num", text: String(i + 1) }),
+        h("span", {},
+          h("span", { class: "rail-name", text: step.name }),
+          h("span", { class: "rail-who", style: "display:block", text: live ? "running…" : "" }),
+        ),
+      ),
+    );
+  };
+  els.rail.replaceChildren(
+    h("div", { class: "rail-title", text: "pipeline" }),
+    h("ol", { class: "rail-list" }, STEPS.map(item)),
+  );
+  els.detail.replaceChildren(h("section", { class: "card" },
+    h("div", { class: "card-body" },
+      h("h2", { text: progress ? "Running" : "Nothing has run yet" }),
+      h("p", { class: "lede", text: progress
+        ? `${progress} Each step appears here as soon as the backend finishes it.`
+        : "Pick a dataset and press Run pipeline. Each step fills in as the " +
+          "backend finishes it." }),
+    ),
+  ));
 }
 
 function showMessage(title, body) {

@@ -61,18 +61,19 @@ function actorCell(variant, actor, note) {
 
 function stepRow(entry, i, onSelect) {
   const { spec, status, decisions } = entry;
+  const pending = status === "pending";
   return h("button", {
-    class: "option",
+    class: pending ? "option pending" : "option",
     style: "text-align:left;cursor:pointer;font:inherit;color:inherit;width:100%",
     onClick: () => onSelect(spec.name),
   },
     h("span", { class: "option-key", text: `${i + 1}. ${spec.name}` }),
     h("span", { class: "option-p" },
-      chip(WHO_TEXT[spec.decidedBy], WHO_CLASS[spec.decidedBy]),
+      pending ? "" : chip(WHO_TEXT[spec.decidedBy], WHO_CLASS[spec.decidedBy]),
       decisions.length ? ` ${decisions.length}` : "",
-      status === "ok" ? "" : ` · ${status}`,
+      status === "ok" || pending ? "" : ` · ${status}`,
     ),
-    h("span", { class: "option-desc", text: spec.blurb }),
+    h("span", { class: "option-desc", text: pending ? "" : spec.blurb }),
   );
 }
 

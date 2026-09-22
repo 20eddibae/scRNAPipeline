@@ -19,6 +19,17 @@ export function renderStepCard(root, run, stepName, index, { running = false } =
   if (!entry) { root.replaceChildren(); return; }
 
   const { spec, record, status, decisions } = entry;
+  if (status === "pending" && !running) {
+    root.replaceChildren(h("section", { class: "card pending" },
+      h("div", { class: "card-head" },
+        h("h2", { text: `${index + 1}. ${spec.title}` }),
+        h("code", { class: "decision-type", text: spec.name }),
+        h("span", { class: "spacer" }),
+        chip("not run yet", "mono"),
+      ),
+    ));
+    return;
+  }
   const panels = buildPanels(spec.viz, run);
   const reasoning = renderReasoning(run.reasoning(spec.name));
 
@@ -27,7 +38,7 @@ export function renderStepCard(root, run, stepName, index, { running = false } =
       h("h2", { text: `${index + 1}. ${spec.title}` }),
       h("code", { class: "decision-type", text: spec.name }),
       h("span", { class: "spacer" }),
-      WHO_CHIP[spec.decidedBy](),
+      running ? null : WHO_CHIP[spec.decidedBy](),
       running
         ? chip("running…", "modal")
         : chip(status === "ok" ? `ran in ${fmt(entry.seconds)}s` : status,

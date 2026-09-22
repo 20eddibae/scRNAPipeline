@@ -11,7 +11,7 @@
 
 import { Run } from "./schema.js";
 
-const DEFAULT_API = "";  // same-origin; set with ?api= or the picker
+const DEFAULT_API = "";  // none given: main.js tries the page's own origin first
 
 export function apiFromLocation(search = window.location.search) {
   return new URLSearchParams(search).get("api") ?? DEFAULT_API;
