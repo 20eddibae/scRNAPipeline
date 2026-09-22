@@ -8,6 +8,7 @@ the pipeline is demoable with no API access.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from .config import Settings
@@ -29,6 +30,10 @@ Rules:
 - Call finish once evaluate has produced metrics."""
 
 
+# How long a model that returned 429 is tried last rather than first.
+THROTTLE_SECONDS = 120.0
+
+
 class ClaudeClient:
     """Thin wrapper over the Messages API, pointed at the hackathon gateway."""
 
@@ -36,6 +41,7 @@ class ClaudeClient:
         self.settings = settings
         self._client = None
         self.last_model: str | None = None
+        self._throttled: dict[str, float] = {}  # model -> monotonic time it may lead again
 
     def _client_or_build(self):
         if self._client is None:
@@ -69,15 +75,25 @@ class ClaudeClient:
         """
         import anthropic
 
-        models = [self.settings.claude_model]
+        models = [self.settings.fast_model]
         for candidate in self.settings.fallback_models:
             if candidate not in models:
                 models.append(candidate)
+        # A model that 429'd recently goes to the back rather than being tried
+        # first again: each attempt on it costs a round trip before failing over.
+        now = time.monotonic()
+        models.sort(key=lambda m: self._throttled.get(m, 0.0) > now)
 
         last: Exception | None = None
-        for model in models:
+        for i, model in enumerate(models):
+            # The SDK's own retry backs off and re-asks the SAME model on a 429,
+            # which is ~20 s spent on a model the gateway has said no to. Fail
+            # over at once instead; only the last candidate keeps SDK retries.
+            client = self._client_or_build()
+            if i < len(models) - 1:
+                client = client.with_options(max_retries=0)
             try:
-                response = self._client_or_build().messages.create(
+                response = client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
                     thinking={"type": "adaptive"},
@@ -85,6 +101,7 @@ class ClaudeClient:
                     **self._extra(),
                 )
             except anthropic.RateLimitError as exc:
+                self._throttled[model] = time.monotonic() + THROTTLE_SECONDS
                 last = exc
                 continue
             if response.stop_reason == "refusal":

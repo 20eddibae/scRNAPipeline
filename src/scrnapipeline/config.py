@@ -46,6 +46,14 @@ class Settings:
     claude_model: str = field(
         default_factory=lambda: _env("CLAUDE_MODEL", default="claude-opus-5")
     )
+    # The one-shot calls (question framing, marker annotation) sit on the
+    # critical path of every step, one per step. Measured on the gateway for one
+    # framing prompt: opus-5 18-28 s, sonnet-5 7 s, haiku-4-5 3.5-9 s. Sonnet and
+    # Haiku tie on annotation accuracy (experiments/head_to_head.py), so the
+    # orchestrator keeps `claude_model` and these calls default to Sonnet.
+    fast_model: str = field(
+        default_factory=lambda: _env("CLAUDE_FAST_MODEL", default="claude-sonnet-5")
+    )
     # An API key that is not scoped to a workspace must name one per request, or
     # every call returns a 400 that reads like a malformed request rather than a
     # missing header.
@@ -86,6 +94,10 @@ class Settings:
     confidence_floor: float = field(
         default_factory=lambda: float(os.environ.get("JEV_CONFIDENCE_FLOOR", "0.55"))
     )
+
+    # Blend Jev's answers with the corrections scientists saved from the page
+    # (feedback.py). Off means Jev's answers alone.
+    learn_from_feedback: bool = field(default_factory=lambda: _flag("KRINO_LEARN", True))
 
     data_dir: Path = field(
         default_factory=lambda: Path(os.environ.get("SCRNA_DATA_DIR", "data"))

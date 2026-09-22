@@ -114,11 +114,17 @@ def run_model(model: str, *args, **kwargs):
     timeout=60 * 60,
     cpu=8.0,
     memory=32768,
+    # Keep the container (and its compiled numba kernels, see warmup.py) alive
+    # between demo runs instead of cold-starting after Modal's default ~60 s
+    # idle. For zero cold starts on stage, deploy with min_containers=1 as well.
+    scaledown_window=20 * 60,
 )
-# One run per container. A run holds a whole matrix in memory and streams for
-# minutes, so packing two into one container helps nobody; this is the default
-# in Modal 1.x and is stated here because it is a requirement, not an accident.
-@modal.concurrent(max_inputs=1)
+# NOT max_inputs=1: that routes every request made while a run is streaming -
+# the page's JS modules, /health, /datasets - to a fresh cold container, which
+# then pays the image load, the scanpy import and the numba compile again. A
+# run is a sync generator on the threadpool with its own Pipeline object, and a
+# demo matrix is well under 1 GB, so a few concurrent requests share one box.
+@modal.concurrent(max_inputs=8)
 @modal.asgi_app()
 def web():
     """The demo's backend: pick a dataset, press run, watch the steps land.
@@ -138,13 +144,9 @@ def web():
     os.environ.setdefault("SCRNA_DATA_DIR", "/vol/data")
     os.environ.setdefault("SCRNA_RUN_DIR", "/vol/runs")
 
-    from fastapi.staticfiles import StaticFiles
+    from scrnapipeline.server import app as api, mount_ui
 
-    from scrnapipeline.server import app as api
-
-    # Mounted last so /health, /datasets and /run still match first.
-    api.mount("/", StaticFiles(directory="/root/web", html=True), name="ui")
-    return api
+    return mount_ui(api, "/root/web")
 
 
 @app.local_entrypoint()

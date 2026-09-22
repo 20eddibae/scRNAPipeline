@@ -8,6 +8,7 @@ from typing import Any
 
 from .claude import ClaudeClient, Orchestrator
 from .config import Settings, load_settings
+from .feedback import FeedbackStore, LearnedDecider
 from .jev import OverrideDecider, build_decider
 from .planner import QuestionPlanner
 from .registry import DEFAULT_ORDER, build_steps, tool_schemas, unmet_dependencies
@@ -25,6 +26,10 @@ class Pipeline:
         self.dataset = dataset
         self.state = RunState(run_id=run_id or new_run_id(), dataset=dataset)
         self.decider = build_decider(self.settings)
+        if self.settings.learn_from_feedback and not self.settings.jev_offline:
+            # Scientists' saved corrections pull Jev's answers towards theirs.
+            self.decider = LearnedDecider(self.decider, FeedbackStore(self.settings.run_dir),
+                                          self.settings.confidence_floor)
         if overrides:
             self.decider = OverrideDecider(self.decider, overrides)
         self.annotator = None if self.settings.claude_offline else ClaudeClient(self.settings)

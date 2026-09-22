@@ -25,10 +25,26 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--label-key", default=None,
                      help="ground-truth obs column; autodetected when omitted")
 
+    serve = sub.add_parser("serve", help="serve the page and its backend on one port")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=5173)
+
     sub.add_parser("steps", help="list the steps in canonical order")
     sub.add_parser("datasets", help="list the datasets this pipeline knows about")
 
     args = parser.parse_args(argv)
+
+    if args.command == "serve":
+        # The local twin of modal_app.web(): same app, same page, one port.
+        from pathlib import Path
+
+        import uvicorn
+
+        from .server import app, mount_ui
+
+        web = Path(__file__).resolve().parents[2] / "web"
+        uvicorn.run(mount_ui(app, str(web)), host=args.host, port=args.port)
+        return 0
 
     if args.command == "steps":
         for name in DEFAULT_ORDER:

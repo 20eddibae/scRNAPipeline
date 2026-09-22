@@ -28,7 +28,7 @@ import os
 import time
 from typing import Any, Iterator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -90,9 +90,54 @@ def _warm() -> None:
     warm_up_in_background()
 
 
+def mount_ui(api: FastAPI, directory: str) -> FastAPI:
+    """Serve the page from the same origin as the API, last, so /health,
+    /datasets and /run still match first.
+
+    Every response says `no-cache` (revalidate, not "never store"): the page is
+    ES modules, and a browser that heuristically caches some of them runs a mix
+    of old and new code after an edit - which is what a demo machine that was
+    open during development looks like.
+    """
+    from fastapi.staticfiles import StaticFiles
+
+    class RevalidatedStatic(StaticFiles):
+        async def get_response(self, path: str, scope: Any):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    api.mount("/", RevalidatedStatic(directory=directory, html=True), name="ui")
+    return api
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "steps": list(DEFAULT_ORDER), "guarded": bool(os.environ.get("DEMO_TOKEN"))}
+
+
+@app.post("/feedback")
+def feedback(entry: dict[str, Any] = Body(...), token: str | None = Query(None)) -> dict[str, Any]:
+    """Save one scientist's correction to a Jev decision. Later runs blend it in."""
+    _authorise(token)
+    from .config import load_settings
+    from .feedback import FeedbackStore
+
+    store = FeedbackStore(load_settings().run_dir)
+    try:
+        saved = store.add(entry)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"saved": saved, "learned": store.prior(saved["step"], saved["question"])}
+
+
+@app.get("/feedback")
+def feedback_summary() -> dict[str, Any]:
+    """What has been learned so far, per question."""
+    from .config import load_settings
+    from .feedback import FeedbackStore
+
+    return {"learned": FeedbackStore(load_settings().run_dir).summary()}
 
 
 @app.get("/datasets")

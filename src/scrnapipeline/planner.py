@@ -46,6 +46,7 @@ Rewrite each question for THIS dataset:
 - For a score question, rewrite the rungs of the scale. Keep the same number of
   rungs in the same order - they index pipeline settings you cannot see.
 - You may NOT invent new option keys. The keys are branch labels in code.
+- Be brief: at most two sentences of instructions, one sentence per option.
 
 Return JSON only, no prose:
 {{"questions": {{"<name>": {{"instructions": "...",
