@@ -143,12 +143,34 @@ def _annotate_markers(client: Any, markers: dict[str, list[str]], context: str):
             f"fallback (unparseable response: {exc.__class__.__name__})"
 
 
-def _annotate_celltypist(adata: Any):
-    import celltypist
+def _annotate_celltypist(adata: Any, model: str = "Immune_All_Low.pkl"):
+    """CellTypist wants log1p-normalised-to-10k counts over the FULL gene set.
 
-    result = celltypist.annotate(adata, model="Immune_All_Low.pkl", majority_voting=True)
-    per_cell = result.predicted_labels["majority_voting"].astype(str).values
-    return {}, per_cell, "celltypist (Immune_All_Low)"
+    By the time this step runs, `adata.X` has been subset to highly variable
+    genes and then scaled to zero mean -- feeding that in would produce labels
+    that look plausible and mean nothing. `features` stashes the pre-subset,
+    pre-scaling matrix in `adata.raw`, which is exactly the required input.
+    """
+    import celltypist
+    from celltypist import models
+
+    if adata.raw is None:
+        raise RuntimeError(
+            "celltypist needs the full log1p-normalised gene set; adata.raw is "
+            "unset, so the pre-HVG matrix was not kept"
+        )
+    source = adata.raw.to_adata()
+
+    try:
+        models.download_models(model=model, force_update=False)
+    except Exception as exc:
+        raise RuntimeError(f"could not fetch celltypist model {model!r}: {exc}") from exc
+
+    result = celltypist.annotate(source, model=model, majority_voting=True)
+    labels = result.predicted_labels
+    column = "majority_voting" if "majority_voting" in labels else "predicted_labels"
+    per_cell = labels[column].astype(str).to_numpy()
+    return {}, per_cell, f"celltypist ({model}, {column})"
 
 
 def _annotate_sctab(adata: Any):
