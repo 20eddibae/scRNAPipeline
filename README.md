@@ -72,7 +72,16 @@ the pipeline starts from a count matrix.
 | `pbmc3k` | raw | 8 types, grafted by barcode from `pbmc3k_processed` | 1 | the 2-minute smoke run |
 | `pbmc68k_reduced` | processed | `bulk_labels` | 1 | quick label sanity |
 | `h5ad:<path>` | yours | `--label-key` | yours | anything else |
+| `sctab_val_raw` | **raw** | CELLxGENE ontology `cell_type` | yes | every decision is live — the one to demo on |
+| `sctab_train_preprocessed` | pre-normalized | CELLxGENE ontology `cell_type` | yes | evaluation; `qc` and `normalize` skip |
 | `merlin:<dir>` | **pre-normalized** | 164 CELLxGENE ontology types | ~740 `tech_sample` | evaluation + scTab head-to-head |
+
+`python -m scrnapipeline.cli datasets` lists these. **No loader trusts a
+filename**: `_prepare_h5ad` measures whether `X` holds non-negative integers and
+sets `pre_normalized` from that, detects the label column, finds a batch key, and
+flags scTab's 19,331-gene feature space. A file called `raw` that isn't raw would
+otherwise be normalized twice, silently — which is the same failure the Merlin
+store produced, and the reason the check exists.
 
 **The scTab Merlin store is not a raw input.** Measured on
 `merlin_cxg_2023_05_15_sf-log1p_minimal`: `X` is float with max 4.897 and 75%

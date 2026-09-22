@@ -24,6 +24,45 @@ DATASETS: dict[str, tuple[str, str | None]] = {
 }
 
 
+# Datasets that live as files rather than as a scanpy loader. Resolved against
+# SCRNA_DATA_DIR, then the working directory, so the same name works locally and
+# on a Modal volume.
+#
+# The scTab pair is the one worth understanding before using it. The RAW export
+# is the dataset this pipeline actually wants: real counts, so the QC and
+# normalization decisions are live, plus CELLxGENE ontology labels and real batch
+# structure. The PREPROCESSED export has had those decisions made inside it
+# already -- useful as an evaluation substrate and for the scTab comparison,
+# useless for demonstrating the decision layer. Nothing here trusts those names:
+# `_prepare_h5ad` measures whether X holds counts and sets `pre_normalized`
+# accordingly, because a filename is not evidence.
+FILE_DATASETS: dict[str, tuple[str, str]] = {
+    "sctab_val_raw": (
+        "sctab_raw_1pct_VAL.h5ad",
+        "1% of the scTab validation split, raw counts -- every decision is live.",
+    ),
+    "sctab_train_preprocessed": (
+        "sctab_preprocessed_1pct_TRAIN.h5ad",
+        "1% of the scTab training split, already preprocessed -- qc and "
+        "normalize will skip.",
+    ),
+}
+
+
+def _resolve_file_dataset(name: str) -> Path:
+    filename = FILE_DATASETS[name][0]
+    roots = [Path(os.environ["SCRNA_DATA_DIR"])] if os.environ.get("SCRNA_DATA_DIR") else []
+    roots += [Path.cwd(), Path.cwd().parent, Path(__file__).resolve().parents[3]]
+    for root in roots:
+        candidate = root / filename
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"dataset {name!r} expects {filename!r}; looked in "
+        f"{[str(r) for r in roots]}. Set SCRNA_DATA_DIR to where it lives."
+    )
+
+
 class LoadStep(Step):
     name = "load"
     description = "Load a public count matrix and attach ground-truth labels if any."
@@ -32,12 +71,18 @@ class LoadStep(Step):
         self, adata: Any, state: RunState, choices: dict[str, Any]
     ) -> tuple[Any, dict[str, Any]]:
         spec = state.dataset
-        if spec.startswith("merlin:"):
+        if spec in FILE_DATASETS:
+            path = _resolve_file_dataset(spec)
+            if path.stat().st_size < 1024:
+                raise ValueError(f"{path} looks empty -- still being written?")
+            adata = sc.read_h5ad(path)
+            adata, label_key = _prepare_h5ad(adata, state)
+        elif spec.startswith("merlin:"):
             adata, label_key = _load_merlin(spec.split(":", 1)[1])
             state.observe(pre_normalized=True, sctab_feature_space=True)
         elif spec.startswith("h5ad:"):
             adata = sc.read_h5ad(spec.split(":", 1)[1])
-            label_key = state.obs.get("label_key")
+            adata, label_key = _prepare_h5ad(adata, state)
         elif spec in DATASETS:
             loader, label_key = DATASETS[spec]
             adata = getattr(sc.datasets, loader)()
@@ -45,7 +90,9 @@ class LoadStep(Step):
                 label_key = _graft_pbmc3k_labels(adata)
         else:
             raise ValueError(
-                f"unknown dataset {spec!r}; use one of {sorted(DATASETS)} or h5ad:<path>"
+                f"unknown dataset {spec!r}; use one of "
+                f"{sorted(list(DATASETS) + list(FILE_DATASETS))}, h5ad:<path> or "
+                "merlin:<dir>"
             )
 
         adata.var_names_make_unique()
@@ -146,3 +193,78 @@ def _load_merlin(path: str, split: str = "val", max_cells: int | None = None):
     adata.var_names = var["feature_name"].astype(str).to_numpy()
     adata.var["feature_id"] = var["feature_id"].to_numpy()
     return adata, "cell_type"
+
+
+# Columns that carry a cell-type label, in the order we would trust them.
+LABEL_CANDIDATES = (
+    "cell_type", "ground_truth", "celltype", "cell_types", "CellType",
+    "cell_ontology_class", "bulk_labels", "louvain", "leiden_labels", "labels",
+)
+
+
+def _prepare_h5ad(adata: Any, state: RunState):
+    """Work out what we were handed, rather than assuming.
+
+    Three things have to be detected and not assumed, because getting any of
+    them wrong is silent:
+
+      * which column holds the ground-truth label,
+      * whether X is raw counts or has already been normalised,
+      * whether the matrix sits in scTab's fixed feature space.
+
+    The second is the one that bit us on the Merlin store: a matrix that has
+    already been size-factor + log1p normalised looks fine to every downstream
+    step, and normalising it again is wrong in a way nothing raises about.
+    """
+    label_key = state.obs.get("label_key") or _detect_label_key(adata)
+    pre_normalized = not _looks_like_counts(adata)
+    state.observe(pre_normalized=pre_normalized,
+                  sctab_feature_space=_looks_like_sctab_space(adata))
+
+    max_cells = int(os.environ.get("SCRNA_MAX_CELLS", "0"))
+    if 0 < max_cells < adata.n_obs:
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        keep = rng.choice(adata.n_obs, size=max_cells, replace=False)
+        adata = adata[np.sort(keep)].copy()
+        state.observe(subsampled_to=max_cells)
+
+    if "batch" not in adata.obs:
+        for key in ("tech_sample", "sample", "donor_id", "dataset_id", "batch_id"):
+            if key in adata.obs and adata.obs[key].nunique() > 1:
+                adata.obs["batch"] = adata.obs[key].astype(str)
+                break
+
+    return adata, label_key
+
+
+def _detect_label_key(adata: Any) -> str | None:
+    for key in LABEL_CANDIDATES:
+        if key in adata.obs and adata.obs[key].notna().any():
+            return key
+    return None
+
+
+def _looks_like_counts(adata: Any, n: int = 200) -> bool:
+    """Raw counts are non-negative integers. Normalised values are not.
+
+    Checked on a sample of rows rather than the whole matrix -- this runs before
+    anything has decided how much of the data to keep in memory.
+    """
+    import numpy as np
+    from scipy.sparse import issparse
+
+    if "counts" in adata.layers:
+        return True
+    block = adata.X[: min(n, adata.n_obs)]
+    values = block.data if issparse(block) else np.asarray(block).ravel()
+    if values.size == 0:
+        return True
+    values = np.asarray(values, dtype=float)
+    return bool(values.min() >= 0 and np.allclose(values, np.round(values)))
+
+
+def _looks_like_sctab_space(adata: Any) -> bool:
+    """scTab expects a fixed 19,331-gene feature space in a fixed order."""
+    return adata.n_vars == 19331
