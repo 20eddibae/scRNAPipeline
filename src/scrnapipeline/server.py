@@ -71,13 +71,23 @@ def _allowed_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()] or ["*"]
 
 
-app = FastAPI(title="Krino", docs_url=None, redoc_url=None)
+app = FastAPI(title="scKrino", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _warm() -> None:
+    """Compile the numba kernels now, so the first Run is not the slow one."""
+    if os.environ.get("KRINO_NO_WARMUP"):
+        return
+    from .warmup import warm_up_in_background
+
+    warm_up_in_background()
 
 
 @app.get("/health")

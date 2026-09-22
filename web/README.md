@@ -1,4 +1,4 @@
-# Krino — demo UI
+# scKrino — demo UI
 
 A one-page walkthrough of a single-cell run: all eight steps, and at each one
 the decision that was actually made — the options Jev was choosing between, the
