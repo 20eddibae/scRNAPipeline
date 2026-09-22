@@ -221,6 +221,67 @@ correction under the Headline.
 Caveats: one dataset, 9 clusters, and the ranking rests on one cluster. List
 prices, not invoices. Claude used adaptive thinking; Haiku 4.5 ran without it.
 
+### Experiment 3b: the same arms on labels nobody made from markers
+
+`experiments/head_to_head_sctab.py`. pbmc3k's labels were made by reading
+each cluster's markers, so marker-reading arms are partly scored against
+themselves there. This run uses the blood rows of the scTab validation split
+instead: 8,305 cells after QC, from 25 CELLxGENE studies, with Cell Ontology
+labels assigned by those studies' authors. Harmony was applied over the
+studies, with 4 studies of fewer than 10 cells pooled. There were 16 clusters.
+
+The arm code is unchanged from Experiment 3. The truth has about 68 fine
+ontology types. It is collapsed onto the same 7-way vocabulary by keyword
+rules written from the ontology names. 514 cells (6%) are excluded rather than
+guessed: mature αβ T, γδ T, MAIT, NK T, bare "T cell", erythrocytes and
+similar. The canonical panel predates these cells, so here the `overlap` arm
+is a clean free baseline.
+
+| arm | cell acc | clusters right | $ per run | wall s |
+|---|---|---|---|---|
+| oracle (ceiling) | 0.9082 | 16/16 | — | — |
+| `celltypist` | **0.9064** | 15/16 | 0 (CPU) | 1.7 |
+| `claude-sonnet-5` | **0.8999** | 14/16 | 0.0269 | 29.9 |
+| `jev_loop` | 0.8421 | 12/16 | 0.00068 | 5.3 |
+| `claude-haiku-4-5` | 0.8385 [0.837–0.839] | 12.7/16 | 0.0139 | 23.1 |
+| `jev` | 0.8374 | 12/16 | 0.00047 | 4.5 |
+| `overlap` (no model) | 0.7908 | 9/16 | 0 | 0.0 |
+| `claude-opus-5` | not measured (gateway 429) | | | |
+
+On pbmc3k three arms tied. **Here the arms separate**, over a range of
+0.79–0.91 against 0.87–0.90. Three results move:
+
+* **CellTypist goes from tied-last to first**, within 0.002 of the ceiling.
+  It is the only arm that reads the full expression profile rather than a
+  top-10 list, and the only one whose knowledge is independent of any marker
+  list.
+* **Jev now beats the free baseline**, by +0.047. On pbmc3k it matched it.
+* **Haiku no longer matches Sonnet.** It falls to Jev's level at 30× Jev's
+  cost.
+
+**The Sonnet–Jev gap is the same cluster as on pbmc3k.** Cluster 11 has 767
+cells with markers GZMH, NKG7, CST7, CCL5, B2M, GNLY, FGFBP2, and it is mostly
+CD8 T cells. Sonnet calls it CD8 T cell. Jev, `jev_loop`, Haiku and overlap
+call it NK cell. The same NK-vs-CD8 confusion now appears on labels that owe
+nothing to markers, so it is a property of the task, not of pbmc3k. The
+evidence loop again did not fire on it, because the call cleared the floor.
+This is the trigger defect from Experiment 2, reproduced.
+
+Jev vs Sonnet: −0.06 accuracy at 1/58th the cost and about 6× the speed. Every
+repeat was identical except Haiku, which moved by one cluster.
+
+Caveats: one dataset, 16 clusters, and the rules that collapse the truth are
+this author's. They were audited name by name, and one bug was caught:
+"plasmacytoid dendritic cell" had matched "plasma" and mapped to B cell.
+Clusters 14 (proliferating) and 15 (FGF23, GPM6A: not blood-like) defeat
+every marker arm.
+
+**Five pipeline bugs found getting here, all silent:** the export carried no
+gene names; annotate overwrote the scTab truth column, so the first run scored
+itself at ARI 1.0 and accuracy 1.0; harmony crashed after converging on
+harmonypy 2.x and fell back to no correction; clustering discarded bbknn's
+corrected graph; and duplicate barcodes broke CellTypist's alignment.
+
 ---
 
 ## Experiment 4: does the annotation difference survive into DE?
