@@ -16,7 +16,7 @@ import numpy as np
 from scipy.stats import wilcoxon
 
 IN = Path(sys.argv[1] if len(sys.argv) > 1 else "experiments/results/aggregate.json")
-ARMS = ("oracle", "claude-sonnet-5", "claude-haiku-4-5", "cascade", "split",
+ARMS = ("oracle", "claude-opus-5", "cascade_opus", "claude-sonnet-5", "claude-haiku-4-5", "cascade", "split",
         "split_all", "jev", "overlap", "celltypist")
 
 
@@ -103,14 +103,21 @@ def main() -> int:
                and h4c and h4c["mean"] >= 0)
     print(f"   -> {'SUPPORTED' if h4_pass else 'NOT SUPPORTED'}")
 
-    print("\n=== OTHER PAIRED COMPARISONS (descriptive) ===")
+    print("\n=== OTHER PAIRED COMPARISONS (descriptive; cascade_opus is exploratory) ===")
     for a, b, m in (("claude-sonnet-5", "jev", "cell_accuracy"),
                     ("claude-haiku-4-5", "claude-sonnet-5", "cell_accuracy"),
                     ("cascade", "celltypist", "cell_accuracy"),
                     ("cascade", "celltypist", "de_jaccard_mean"),
                     ("claude-sonnet-5", "celltypist", "cell_accuracy"),
                     ("jev", "overlap", "cell_accuracy"),
-                    ("split", "cascade", "composition_tv")):
+                    ("split", "cascade", "composition_tv"),
+                    ("claude-opus-5", "claude-sonnet-5", "cell_accuracy"),
+                    ("claude-opus-5", "celltypist", "cell_accuracy"),
+                    ("cascade_opus", "claude-opus-5", "cell_accuracy"),
+                    ("cascade_opus", "claude-sonnet-5", "cell_accuracy"),
+                    ("cascade_opus", "cascade", "cell_accuracy")):
+        if not any(a in d["scores"] and b in d["scores"] for d in rows):
+            continue
         print(f"  {a} vs {b} ({m}): {fmt(paired(rows, a, b, m))}")
 
     # Escalation targeting: are the clusters Jev flags the ones it gets wrong?

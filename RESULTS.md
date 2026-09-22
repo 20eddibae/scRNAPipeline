@@ -559,3 +559,24 @@ evidence and a cost-aware rule (`cluster_nature`) paid off once, on pbmc3k
 its evidence did not help: Jev either anchored on the default's name or
 reproduced the no-model rule. The tuning decision that matters most (resolution
 on blood) has a 10-point spread that no current chooser, model or rule, captures.
+
+### Addendum: Claude Opus 5 (exploratory, not pre-registered)
+
+Opus 5 was rate-limited on the gateway earlier, so it was run through the Anthropic
+API directly (`experiments/add_arm.py`). That run rebuilt the same clusterings and
+checked them against the stored ones before scoring.
+
+| | cell acc | vs Sonnet (W/T/L) | $ / 1,000 clusters | median call |
+|---|---|---|---|---|
+| Claude Opus 5 | 0.777 | 1/10/1 | 4.03 | 1.99 s (direct) |
+| Claude Sonnet 5 | 0.788 | — | 1.77 | 1.42 s (gateway) |
+| cascade escalating to Opus | 0.773 | 0/11/1 | 1.27 | — |
+| cascade escalating to Haiku (pre-registered) | 0.773 | 0/11/1 | 0.30 | — |
+
+**Opus buys nothing on this task.** It ties Sonnet on 10 of 12 datasets, wins one
+(sctab:01ad3cd7, +0.046) and loses one (sctab:21d3e683, −0.18). That loss is the
+same cluster Haiku got wrong. Escalating to Opus instead of Haiku gives an
+identical cascade (12/12 ties) at 4× the price. The cascade's H1 miss is not an
+escalation-target problem either: on the cluster that decided it, Sonnet was
+the only Claude model that was right. Latency is not like-for-like: Opus went
+direct and the others through the gateway.

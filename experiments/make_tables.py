@@ -18,6 +18,8 @@ from aggregate_stats import paired  # noqa: E402
 R = Path("experiments/results")
 NICE = {
     "oracle": "Ceiling (true majority type per cluster)",
+    "claude-opus-5": "Claude Opus 5",
+    "cascade_opus": "Krino cascade → Opus (exploratory)",
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-haiku-4-5": "Claude Haiku 4.5",
     "cascade": "Krino cascade (Jev → Claude when torn)",
@@ -27,7 +29,8 @@ NICE = {
     "overlap": "No model (marker overlap)",
     "celltypist": "CellTypist (per cell)",
 }
-ORDER = ["oracle", "split", "split_all", "cascade", "claude-sonnet-5",
+ORDER = ["oracle", "split", "split_all", "cascade", "cascade_opus", "claude-opus-5",
+         "claude-sonnet-5",
          "claude-haiku-4-5", "jev", "celltypist", "overlap"]
 
 
@@ -116,18 +119,28 @@ def main() -> int:
     tables["per_dataset"] = {"headers": head3, "rows": t3}
     text += ["## 3. Cell accuracy per dataset\n", md(head3, t3), ""]
 
-    # T4 — cost and speed, from the calls themselves
-    h2h = json.loads((R / "head_to_head.json").read_text())
-    head4 = ["Model", "Median latency per call", "$ per 1,000 clusters", "Output tokens billed"]
+    # T4 — cost and speed, from every per-cluster call in the aggregate run
+    head4 = ["Model", "Median latency per call", "$ per 1,000 clusters",
+             "Output tokens billed", "Route"]
     t4 = []
-    for a, label, billed in (("jev", "Jev", "no ($0)"),
-                             ("claude-haiku-4-5", "Claude Haiku 4.5", "yes"),
-                             ("claude-sonnet-5", "Claude Sonnet 5", "yes")):
-        lat = np.median([r["median_latency_s"] for r in h2h[a]["runs"]])
-        cost = sum(d["scores"][a]["cost_usd"] for d in rows_d)
-        t4.append([label, f"{lat:.2f} s", f"${cost / n_clusters * 1000:.2f}", billed])
+    for a, label, billed, route in (
+            ("jev", "Jev", "no ($0)", "Vercel gateway"),
+            ("claude-haiku-4-5", "Claude Haiku 4.5", "yes", "Vercel gateway"),
+            ("claude-sonnet-5", "Claude Sonnet 5", "yes", "Vercel gateway"),
+            ("claude-opus-5", "Claude Opus 5", "yes", "Anthropic API direct")):
+        lats = [calls[a]["seconds"] for d in rows_d for calls in d["calls"].values()
+                if a in calls]
+        if not lats:
+            continue
+        cost = sum(calls[a]["cost_usd"] for d in rows_d for calls in d["calls"].values()
+                   if a in calls)
+        t4.append([label, f"{np.median(lats):.2f} s", f"${cost / len(lats) * 1000:.2f}",
+                   billed, route])
     tables["cost_speed"] = {"headers": head4, "rows": t4}
-    text += ["## 4. Cost and speed per decision\n", md(head4, t4), ""]
+    text += ["## 4. Cost and speed per decision\n", md(head4, t4),
+             "\nMedian over every per-cluster call. Opus went to the Anthropic API "
+             "directly, the others through the Vercel gateway, so latency differs by "
+             "route as well as by model.\n"]
 
     # T5 — does Jev's uncertainty point at its own mistakes?
     fw = f = kw = k = 0
