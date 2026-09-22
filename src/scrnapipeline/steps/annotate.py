@@ -413,7 +413,8 @@ def _top2_margin(probabilities: Any) -> float | None:
 def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
                   context: str, abstain_below: float | None = None,
                   retry_with_evidence: bool = True, split_mixed: bool = True,
-                  margin_below: float = 0.30, split_p: float = 0.30):
+                  margin_below: float = 0.30, split_p: float = 0.30,
+                  panel_first: bool = False):
     """Ask Jev, per cluster, which cell type the marker genes indicate.
 
     One call per cluster rather than one per run. The probabilities are kept on
@@ -501,7 +502,12 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
     per_cluster: dict[str, dict[str, Any]] = {}
     for cluster, genes in markers.items():
         size = int((adata.obs["leiden"] == cluster).sum())
-        decision = ask(cluster, size, genes)
+        # panel_first: hand every cluster the canonical panel on the first call
+        # instead of waiting for a trigger. Neither trigger ever fired on the
+        # cluster that needed it (pbmc3k cluster 5, the scTab-blood CD8 cluster),
+        # and a Jev call costs a fraction of a cent.
+        decision = ask(cluster, size, genes,
+                       panel=_panel_expression(adata, cluster) if panel_first else None)
         attempts = 1
         resolved_by = "ranked markers"
 

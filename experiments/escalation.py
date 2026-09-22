@@ -12,6 +12,8 @@ Arms, on each rung's identical partition (seed-0 Leiden, as in Experiment 7):
   escalate     jev, but a cluster left Unclear is sent to Claude with the same
                markers and the same closed list. Jev's abstention is the router;
                Claude is paid only on the clusters Jev declined.
+  jev_panel_first  jev, with the canonical lineage panel on the FIRST call for
+               every cluster (no split, same partition the others name)
   claude       Claude on every cluster, the same prompt as Experiment 3. The
                reference for what escalation leaves on the table.
 
@@ -42,7 +44,8 @@ from scrnapipeline.steps.annotate import _annotate_jev, _top_markers
 DATASET = sys.argv[1] if len(sys.argv) > 1 else "sctab_val_blood"
 RUNGS = [float(r) for r in os.environ.get("ESC_RUNGS", "0.6,0.8,1.0").split(",")]
 MODEL = os.environ.get("ESC_MODEL", "claude-haiku-4-5")
-OUT = Path(f"experiments/results/escalation_{DATASET}.json")
+OUT = Path(f"experiments/results/escalation_{DATASET}"
+           f"{'_noclaude' if os.environ.get('ESC_SKIP_CLAUDE') else ''}.json")
 
 
 def main():
@@ -71,7 +74,14 @@ def main():
         markers = a.uns["top_markers"] if "leiden_presplit" in a.obs else _top_markers(a, n=10)
         sizes = {c: int((a.obs["leiden"] == c).sum()) for c in markers}
 
-        claude_calls, cost = arm_claude(markers, sizes, "human PBMC", settings, model=MODEL)
+        b = a.copy()
+        b.obs["leiden"] = a.obs["leiden"]
+        panel_labels, _, _ = _annotate_jev(b, dict(markers), settings, "human PBMC",
+                                           split_mixed=False, panel_first=True)
+        if os.environ.get("ESC_SKIP_CLAUDE"):
+            claude_calls, cost = {c: {"label": None} for c in markers}, None
+        else:
+            claude_calls, cost = arm_claude(markers, sizes, "human PBMC", settings, model=MODEL)
         claude_labels = {c: v["label"] for c, v in claude_calls.items()}
         unclear = [c for c, l in jev_labels.items() if l in (None, "Unclear")]
         esc_labels = {c: (claude_labels.get(c, "Unclear") if c in unclear else l)
@@ -86,9 +96,12 @@ def main():
             maj = Counter(t).most_common(1)[0] if t else (None, 0)
             rows.append({"cluster": c, "size": sizes[c], "majority": maj[0],
                          "majority_share": round(maj[1] / max(len(t), 1), 2),
-                         "jev": jev_labels.get(c), "claude": claude_labels.get(c),
+                         "jev": jev_labels.get(c), "jev_panel_first": panel_labels.get(c),
+                         "claude": claude_labels.get(c),
                          "top5": markers[c][:5]})
-        arms = {"jev": jev_labels, "escalate": esc_labels, "claude": claude_labels}
+        arms = {"jev": jev_labels, "jev_panel_first": panel_labels}
+        if not os.environ.get("ESC_SKIP_CLAUDE"):
+            arms.update({"escalate": esc_labels, "claude": claude_labels})
         res = {name: score(a, labels, label_key)["cell_accuracy_vocab"] for name, labels in arms.items()}
         report["rungs"][str(r)] = {"accuracy": res, "n_unclear": len(unclear),
                                    "cells_in_unclear": int(sum(sizes[c] for c in unclear)),
@@ -97,7 +110,7 @@ def main():
         for row in rows:
             flag = "" if row["jev"] == row["majority"] else "   <-- jev wrong"
             print(f"    {row['cluster']:>4} n={row['size']:<5} truth {str(row['majority']):<22}"
-                  f"({row['majority_share']})  jev {str(row['jev']):<22} claude {row['claude']}{flag}")
+                  f"({row['majority_share']})  jev {str(row['jev']):<22} panel {str(row['jev_panel_first']):<22} claude {row['claude']}{flag}")
         OUT.write_text(json.dumps(report, indent=2, default=str))
 
 
