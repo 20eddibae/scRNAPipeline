@@ -61,8 +61,9 @@ class QCStep(Step):
 
         adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
         sc.pp.calculate_qc_metrics(
-            adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+            adata, qc_vars=["mt"], percent_top=[20], log1p=True, inplace=True
         )
+        outliers = _flag_mad_outliers(adata)
         state.observe(
             median_genes_per_cell=float(np.median(adata.obs["n_genes_by_counts"])),
             median_counts_per_cell=float(np.median(adata.obs["total_counts"])),
@@ -75,7 +76,10 @@ class QCStep(Step):
         sc.pp.filter_genes(adata, min_cells=min_cells)
         adata = adata[adata.obs["pct_counts_mt"] < max_mt * 100].copy()
 
+        kept = adata.obs["qc_outlier"].to_numpy()
+        outliers["kept_by_fixed_thresholds"] = int(kept.sum())
         summary = {
+            "outliers": outliers,
             "min_genes": min_genes,
             "min_cells": min_cells,
             "max_pct_mt": max_mt * 100,
@@ -99,3 +103,38 @@ def _score_doublets(adata: Any) -> str:
         return f"skipped ({exc.__class__.__name__})"
     n = int(adata.obs.get("predicted_doublet", []).sum())
     return f"{n} predicted doublets flagged (not removed)"
+
+
+def _flag_mad_outliers(adata: Any) -> dict[str, Any]:
+    """Flag, never drop, cells that are outliers relative to THIS sample.
+
+    The fixed presets above cut every dataset at the same absolute numbers. The
+    standard complement (scater's isOutlier; the single-cell best-practices
+    book) asks instead whether a cell is far from the rest of its own sample:
+    more than 5 median absolute deviations on log library size, log genes
+    detected or top-20-gene share, or more than 3 MADs on mitochondrial
+    fraction and above 8%. Each flagged cell records which metric flagged it,
+    so the outliers can be inspected rather than silently discarded.
+    """
+    def mad_out(values: np.ndarray, nmads: float) -> np.ndarray:
+        median = np.median(values)
+        mad = np.median(np.abs(values - median))
+        if mad == 0:
+            return np.zeros(len(values), dtype=bool)
+        return np.abs(values - median) > nmads * mad
+
+    obs = adata.obs
+    tests = {
+        "library_size": mad_out(obs["log1p_total_counts"].to_numpy(), 5),
+        "genes_detected": mad_out(obs["log1p_n_genes_by_counts"].to_numpy(), 5),
+        "top20_share": mad_out(obs["pct_counts_in_top_20_genes"].to_numpy(), 5),
+        "mito": (mad_out(obs["pct_counts_mt"].to_numpy(), 3)
+                 & (obs["pct_counts_mt"].to_numpy() > 8)),
+    }
+    reasons = np.array([",".join(k for k, v in tests.items() if v[i])
+                        for i in range(adata.n_obs)], dtype=object)
+    adata.obs["qc_outlier"] = reasons != ""
+    adata.obs["qc_outlier_reason"] = reasons
+    return {"flagged": int((reasons != "").sum()),
+            "by_metric": {k: int(v.sum()) for k, v in tests.items()},
+            "rule": "5 MADs (library, genes, top-20 share); 3 MADs and >8% (mito)"}
