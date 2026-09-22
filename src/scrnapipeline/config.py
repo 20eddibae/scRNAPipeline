@@ -49,6 +49,14 @@ class Settings:
     # An API key that is not scoped to a workspace must name one per request, or
     # every call returns a 400 that reads like a malformed request rather than a
     # missing header.
+    # Tried in order when the primary model is rate-limited on the gateway.
+    fallback_models: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            m.strip() for m in
+            _env("CLAUDE_FALLBACK_MODELS", default="claude-sonnet-5,claude-haiku-4-5").split(",")
+            if m.strip()
+        )
+    )
     anthropic_workspace_id: str | None = field(
         default_factory=lambda: _env("ANTHROPIC_WORKSPACE_ID")
     )

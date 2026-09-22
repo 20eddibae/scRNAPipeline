@@ -70,3 +70,23 @@ def test_jev_state_is_summary_only():
     assert payload["observations"]["n_cells"] == 2700
     assert payload["prior_decisions"]["qc.stringency"] == "strict"
     assert "adata" not in payload and "counts" not in payload
+
+
+def test_matched_accuracy_ignores_vocabulary_but_not_biology():
+    """The metric that must not punish an annotator for its label set."""
+    import numpy as np
+
+    from scrnapipeline.steps.evaluate import _score_annotation
+
+    truth = np.array(["CD4 T cells"] * 60 + ["CD14+ Monocytes"] * 30 + ["B cells"] * 10)
+
+    # Right cells, different words: the observed CellTypist-vs-pbmc3k situation.
+    renamed = np.array(["Tcm/Naive helper T cells"] * 60
+                       + ["Classical monocytes"] * 30 + ["B cells"] * 10)
+    scored = _score_annotation(renamed, truth)
+    assert scored["annotation_matched_accuracy"] == 1.0
+    assert scored["annotation_exact_accuracy"] < 0.2  # vocabulary, not biology
+
+    # Wrong cells: the matcher must still punish this.
+    shuffled = np.array(["A"] * 30 + ["B"] * 30 + ["C"] * 30 + ["D"] * 10)
+    assert _score_annotation(shuffled, truth)["annotation_matched_accuracy"] < 0.8

@@ -34,16 +34,22 @@ class Step(ABC):
             planner: Any = None) -> Any:
         started = time.time()
         questions = self.questions(adata, state)
-        framing = None
+        framing: dict[str, str] | None = None
+        status: dict[str, str] = {}
         if questions and planner is not None:
             # Claude reframes the generic question for this matrix; Jev answers it.
-            questions = planner.refine(self.name, questions, state)
+            questions, status = planner.refine(self.name, questions, state)
             framing = {name: q.instructions for name, q in questions.items()}
         choices: dict[str, Any] = {}
         if questions:
             for name, decision in decider.decide(self.name, questions, state).items():
-                decision.note = (decision.note + " | framed by claude").strip(" |") \
-                    if framing else decision.note
+                framed = status.get(name, "")
+                if framed:
+                    # Say which it was. "framed by claude" on a question that fell
+                    # back to baseline is a false provenance claim.
+                    label = "baseline framing" if framed.startswith("baseline") \
+                        else f"framed by claude ({framed})"
+                    decision.note = f"{decision.note} | {label}".strip(" |")
                 state.record_decision(decision)
                 choices[name] = decision.value
         try:
@@ -56,6 +62,7 @@ class Step(ABC):
         summary = {**{k: _jsonable(v) for k, v in choices.items()}, **summary}
         if framing:
             summary["framing"] = framing
+            summary["framing_status"] = status
         state.record_step(
             StepRecord(self.name, "ok", round(time.time() - started, 2), summary)
         )

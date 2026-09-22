@@ -35,6 +35,7 @@ class ClaudeClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._client = None
+        self.last_model: str | None = None
 
     def _client_or_build(self):
         if self._client is None:
@@ -58,17 +59,39 @@ class ClaudeClient:
         return {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
 
     def ask(self, prompt: str, max_tokens: int = 4000) -> str:
-        """One-shot text answer. Used for marker-based annotation."""
-        response = self._client_or_build().messages.create(
-            model=self.settings.claude_model,
-            max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
-            messages=[{"role": "user", "content": prompt}],
-            **self._extra(),
-        )
-        if response.stop_reason == "refusal":
-            raise RuntimeError(f"request refused: {response.stop_details}")
-        return "".join(b.text for b in response.content if b.type == "text")
+        """One-shot text answer. Used for framing and marker annotation.
+
+        The gateway intermittently returns 429 "No access to this model at this
+        time" for a given model while others are free, so a rate limit here is
+        not a reason to wait -- it is a reason to try the next model. Without
+        this, every framing call during a throttled window silently falls back
+        to the baseline question.
+        """
+        import anthropic
+
+        models = [self.settings.claude_model]
+        for candidate in self.settings.fallback_models:
+            if candidate not in models:
+                models.append(candidate)
+
+        last: Exception | None = None
+        for model in models:
+            try:
+                response = self._client_or_build().messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    thinking={"type": "adaptive"},
+                    messages=[{"role": "user", "content": prompt}],
+                    **self._extra(),
+                )
+            except anthropic.RateLimitError as exc:
+                last = exc
+                continue
+            if response.stop_reason == "refusal":
+                raise RuntimeError(f"request refused: {response.stop_details}")
+            self.last_model = model
+            return "".join(b.text for b in response.content if b.type == "text")
+        raise last if last else RuntimeError("no model available")
 
     def messages(self, **kwargs: Any) -> Any:
         return self._client_or_build().messages.create(**kwargs, **self._extra())

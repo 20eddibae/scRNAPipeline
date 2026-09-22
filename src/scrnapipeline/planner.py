@@ -63,9 +63,15 @@ class QuestionPlanner:
 
     def refine(
         self, step: str, questions: dict[str, Question], state: RunState
-    ) -> dict[str, Question]:
+    ) -> tuple[dict[str, Question], dict[str, str]]:
+        """Returns (questions, per-question status).
+
+        The status is not decoration. When the framing call fails -- a 429, a
+        malformed reply -- these are the baseline questions, and a run log that
+        still claims Claude framed them is lying about its own provenance.
+        """
         if not questions:
-            return questions
+            return questions, {}
 
         prompt = PLANNER_PROMPT.format(
             step=step,
@@ -76,8 +82,9 @@ class QuestionPlanner:
             payload = json.loads(_strip_fence(self.client.ask(prompt, max_tokens=4000)))
             refined = payload["questions"]
         except Exception as exc:
-            self.log.append({"step": step, "status": f"baseline ({exc.__class__.__name__})"})
-            return questions
+            reason = f"baseline (framing failed: {exc.__class__.__name__})"
+            self.log.append({"step": step, "status": reason})
+            return questions, {name: reason for name in questions}
 
         out: dict[str, Question] = {}
         notes: dict[str, str] = {}
@@ -85,12 +92,12 @@ class QuestionPlanner:
             spec = refined.get(name)
             if not isinstance(spec, dict):
                 out[name] = question
-                notes[name] = "baseline (not returned)"
+                notes[name] = "baseline (not returned by claude)"
                 continue
             out[name], notes[name] = _apply_spec(question, spec)
 
         self.log.append({"step": step, "status": "refined", "questions": notes})
-        return out
+        return out, notes
 
 
 def _describe(questions: dict[str, Question]) -> dict[str, Any]:

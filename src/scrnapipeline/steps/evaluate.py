@@ -69,7 +69,9 @@ def _linear_probe(embedding: np.ndarray, labels: np.ndarray, seed: int = 0) -> d
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=0.3, random_state=seed, stratify=y
     )
-    clf = LogisticRegression(max_iter=2000, multi_class="auto")
+    # `multi_class` was removed in scikit-learn 1.7; multinomial is the
+    # default for a multiclass problem, which is what "auto" resolved to.
+    clf = LogisticRegression(max_iter=2000)
     clf.fit(X_tr, y_tr)
     pred = clf.predict(X_te)
     return {
@@ -97,6 +99,11 @@ def _score_annotation(predicted: np.ndarray, truth: np.ndarray) -> dict[str, Any
     loose = float((np.array([_norm(p) for p in predicted])
                    == np.array([_norm(t) for t in truth])).mean())
     return {
+        # The headline: right cells grouped under a consistent name, whatever
+        # that name is.
+        "annotation_matched_accuracy": _matched_accuracy(predicted, truth),
+        # Diagnostics. These two measure VOCABULARY AGREEMENT, not biology: a
+        # perfect annotator using a different label set scores near zero here.
         "annotation_exact_accuracy": round(exact, 4),
         "annotation_normalised_accuracy": round(loose, 4),
         "annotation_macro_f1": round(float(f1_score(truth, predicted,
@@ -104,6 +111,33 @@ def _score_annotation(predicted: np.ndarray, truth: np.ndarray) -> dict[str, Any
                                                     zero_division=0)), 4),
         "annotation_n_predicted_types": int(len(set(predicted))),
     }
+
+
+def _matched_accuracy(predicted: np.ndarray, truth: np.ndarray) -> float:
+    """Accuracy under the best one-to-one map from predicted to true labels.
+
+    Annotators disagree about words far more than about cells. CellTypist calls
+    a cluster "Tcm/Naive helper T cells" where pbmc3k's author wrote "CD4 T
+    cells"; those are the same cells and exact-match scores them zero. Solving
+    the assignment problem on the contingency table asks the question that
+    actually matters -- were the right cells grouped together and given *a*
+    consistent name -- and leaves the naming convention out of it.
+
+    Predicted types beyond the number of true types stay unmapped and count as
+    errors, so over-splitting is still penalised.
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    pred_labels = sorted(set(predicted))
+    true_labels = sorted(set(truth))
+    table = np.zeros((len(pred_labels), len(true_labels)), dtype=np.int64)
+    pred_index = {label: i for i, label in enumerate(pred_labels)}
+    true_index = {label: j for j, label in enumerate(true_labels)}
+    for p, t in zip(predicted, truth):
+        table[pred_index[p], true_index[t]] += 1
+
+    rows, cols = linear_sum_assignment(-table)
+    return round(float(table[rows, cols].sum() / len(truth)), 4)
 
 
 def _norm(label: str) -> str:
