@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrnapipeline"
+version = "0.1.0"
+description = "Agentic scRNA-seq pipeline: Claude orchestrates, Jev decides, Modal runs it."
+requires-python = ">=3.10"
+dependencies = [
+    "scanpy>=1.10",
+    "anndata>=0.10",
+    "leidenalg>=0.10",
+    "igraph>=0.11",
+    "scikit-learn>=1.4",
+    "scipy>=1.11",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "anthropic>=0.70",
+    "typesafe-sdk>=0.1",
+]
+
+[project.optional-dependencies]
+integration = ["harmonypy>=0.0.10", "bbknn>=1.6"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+scrnapipeline = "scrnapipeline.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
