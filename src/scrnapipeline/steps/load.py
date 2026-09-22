@@ -123,6 +123,9 @@ class LoadStep(Step):
             )
 
         adata.var_names_make_unique()
+        # The scTab exports repeat barcodes across studies. Anything that
+        # realigns by name (CellTypist does) then returns more rows than cells.
+        adata.obs_names_make_unique()
 
         # `annotate` writes its predictions to obs["cell_type"]. CELLxGENE and
         # scTab keep their GROUND TRUTH in a column of that exact name, so left
