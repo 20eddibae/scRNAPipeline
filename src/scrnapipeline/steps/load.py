@@ -7,6 +7,7 @@ worth using here, because the label is the ground truth the run is scored on.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +97,7 @@ def _n_batches(adata: Any) -> int:
     return 1
 
 
-def _load_merlin(path: str, split: str = "val", max_cells: int = 20000):
+def _load_merlin(path: str, split: str = "val", max_cells: int | None = None):
     """Read an scTab Merlin parquet store into AnnData.
 
     This store is the scTab *training* format: 19,331 genes in a fixed feature
@@ -117,8 +118,15 @@ def _load_merlin(path: str, split: str = "val", max_cells: int = 20000):
             f"{split}/ and var.parquet"
         )
 
+    # 19,331 genes is a wide matrix: scanpy's scale step densifies to float64, so
+    # n cells x 19,331 x 8 bytes has to fit. 20k cells is 3 GB there and will not
+    # survive a memory-capped login session -- run the full split on Modal, where
+    # the function asks for 32 GB. SCRNA_MERLIN_MAX_CELLS raises the cap.
+    if max_cells is None:
+        max_cells = int(os.environ.get("SCRNA_MERLIN_MAX_CELLS", "5000"))
+
     frame = pd.read_parquet(root / split)
-    if len(frame) > max_cells:
+    if 0 < max_cells < len(frame):
         frame = frame.sample(max_cells, random_state=0).reset_index(drop=True)
 
     var = pd.read_parquet(root / "var.parquet")
