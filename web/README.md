@@ -62,10 +62,10 @@ On Modal:
 
 ```bash
 modal deploy modal_app.py
-# -> https://<workspace>--krino-web.modal.run
+# -> https://<workspace>--sckrino-web.modal.run
 ```
 
-then `?api=https://<workspace>--krino-web.modal.run`, or use the
+then `?api=https://<workspace>--sckrino-web.modal.run`, or use the
 backend button in the control bar, which remembers the URL.
 
 **A deployed endpoint is open unless you close it.** Set `DEMO_TOKEN` on the
