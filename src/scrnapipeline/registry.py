@@ -28,7 +28,8 @@ DEFAULT_ORDER = (
 )
 
 
-def build_steps(annotator: Any = None, context: str = "human PBMC") -> dict[str, Step]:
+def build_steps(annotator: Any = None, context: str = "human PBMC",
+                settings: Any = None) -> dict[str, Step]:
     steps: list[Step] = [
         LoadStep(),
         QCStep(),
@@ -36,7 +37,7 @@ def build_steps(annotator: Any = None, context: str = "human PBMC") -> dict[str,
         FeatureStep(),
         IntegrateStep(),
         ClusterStep(),
-        AnnotateStep(annotator=annotator, context=context),
+        AnnotateStep(annotator=annotator, context=context, settings=settings),
         EvaluateStep(),
     ]
     return {step.name: step for step in steps}

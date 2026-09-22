@@ -21,3 +21,4 @@ runs/*
 # the web demo is static; nothing here is built
 web/node_modules/
 web/.vercel/
+experiments/results/

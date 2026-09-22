@@ -71,6 +71,37 @@ class OfflineDecider:
         return out
 
 
+class OverrideDecider:
+    """Forces named decisions; delegates the rest.
+
+    This is what makes a decision *falsifiable*. Most of the choices in this
+    pipeline have no ground truth -- nobody can say log1p_cpm was "correct" --
+    so the only way to score them is to run both arms and look at what came out.
+    Overrides are keyed "step.question".
+    """
+
+    def __init__(self, base: Decider, overrides: dict[str, Any]):
+        self.base = base
+        self.overrides = overrides
+
+    def decide(
+        self, step: str, questions: dict[str, Question], state: RunState
+    ) -> dict[str, Decision]:
+        forced = {n: q for n, q in questions.items() if f"{step}.{n}" in self.overrides}
+        rest = {n: q for n, q in questions.items() if n not in forced}
+
+        out = self.base.decide(step, rest, state) if rest else {}
+        for name in forced:
+            out[name] = Decision(
+                step=step,
+                question=name,
+                value=self.overrides[f"{step}.{name}"],
+                source="override",
+                note="forced by the counterfactual sweep",
+            )
+        return out
+
+
 class JevDecider:
     """Calls TypeSafe's System One model once per step, batching its questions."""
 

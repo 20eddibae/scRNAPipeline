@@ -8,7 +8,7 @@ from typing import Any
 
 from .claude import ClaudeClient, Orchestrator
 from .config import Settings, load_settings
-from .jev import build_decider
+from .jev import OverrideDecider, build_decider
 from .planner import QuestionPlanner
 from .registry import DEFAULT_ORDER, build_steps, tool_schemas, unmet_dependencies
 from .state import RunState, new_run_id
@@ -19,16 +19,21 @@ result matches the ground-truth labels. Start by inspecting the state."""
 
 class Pipeline:
     def __init__(self, dataset: str, settings: Settings | None = None,
-                 context: str = "human PBMC", run_id: str | None = None):
+                 context: str = "human PBMC", run_id: str | None = None,
+                 overrides: dict[str, Any] | None = None, plan: bool = True):
         self.settings = settings or load_settings()
         self.dataset = dataset
         self.state = RunState(run_id=run_id or new_run_id(), dataset=dataset)
         self.decider = build_decider(self.settings)
+        if overrides:
+            self.decider = OverrideDecider(self.decider, overrides)
         self.annotator = None if self.settings.claude_offline else ClaudeClient(self.settings)
         # Claude frames each step's decision points for this dataset before Jev
         # answers them. Offline, the steps' baseline questions are used as-is.
-        self.planner = None if self.annotator is None else QuestionPlanner(self.annotator)
-        self.steps = build_steps(annotator=self.annotator, context=context)
+        self.planner = None if (self.annotator is None or not plan) \
+            else QuestionPlanner(self.annotator)
+        self.steps = build_steps(annotator=self.annotator, context=context,
+                                 settings=self.settings)
         self.adata: Any = None
 
     # -- the two drivers ---------------------------------------------------

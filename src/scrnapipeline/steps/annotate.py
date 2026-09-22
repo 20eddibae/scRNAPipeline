@@ -49,9 +49,11 @@ class AnnotateStep(Step):
     )
     needs = ("cluster",)
 
-    def __init__(self, annotator: Any = None, context: str = "human PBMC"):
+    def __init__(self, annotator: Any = None, context: str = "human PBMC",
+                 settings: Any = None):
         self.annotator = annotator  # ClaudeClient | None
         self.context = context
+        self.settings = settings
 
     def questions(self, adata: Any, state: RunState) -> dict[str, Question]:
         criteria = {
@@ -64,6 +66,12 @@ class AnnotateStep(Step):
                 "Logistic-regression classifier over curated references. Per-cell "
                 "rather than per-cluster, CPU-cheap; strongest when a reference "
                 "model matching this tissue exists."
+            ),
+            "jev_markers": (
+                "Jev scores each cluster's marker genes against a fixed cell-type "
+                "vocabulary and returns a calibrated probability per type. "
+                "Per-cluster, sub-second, and the only option that can decline to "
+                "answer when the markers are ambiguous."
             ),
             "sctab": (
                 "De novo classifier trained across CELLxGENE. Per-cell, wants a "
@@ -100,6 +108,8 @@ class AnnotateStep(Step):
         executor = Executor(local={
             "markers_llm": lambda: _annotate_markers(self.annotator, markers, self.context),
             "celltypist": lambda: _annotate_celltypist(adata),
+            "jev_markers": lambda: _annotate_jev(adata, markers, self.settings,
+                                                 self.context),
             "sctab": lambda: _annotate_sctab(adata),
         })
 
@@ -193,3 +203,74 @@ def _strip_fence(text: str) -> str:
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
     return text.strip()
+
+
+# The vocabulary Jev chooses from. Written from standard PBMC immunology rather
+# than read off the ground-truth column -- a model handed the answer key's exact
+# strings is being scored on a different, easier task. The headline metric
+# (matched accuracy) is vocabulary-independent anyway; exact-match is not, and
+# would be inflated by lifting these from the labels.
+PBMC_VOCABULARY = {
+    "CD4 T cell": "CD3+ and CD4+, IL7R, CCR7, LTB. Helper T lineage.",
+    "CD8 T cell": "CD3+ and CD8A/CD8B, CCL5, GZMK. Cytotoxic T lineage.",
+    "NK cell": "GNLY, NKG7, KLRD1, no CD3. Cytotoxic, non-T.",
+    "B cell": "CD79A, MS4A1, CD19, HLA-DR high.",
+    "Monocyte": "LYZ, S100A8/S100A9, CD14 or FCGR3A. Myeloid.",
+    "Dendritic cell": "FCER1A, CST3, HLA-DR very high. Antigen presenting.",
+    "Megakaryocyte/Platelet": "PPBP, PF4. Platelet lineage.",
+    "Unclear": "The markers do not point to one of the above with confidence.",
+}
+
+
+def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
+                  context: str, abstain_below: float | None = None):
+    """Ask Jev, per cluster, which cell type the marker genes indicate.
+
+    One call per cluster rather than one per run. The probabilities are kept on
+    `adata.uns` so an abstention threshold can be swept afterwards without
+    paying for the calls again -- the whole point of a model whose output tokens
+    are free.
+    """
+    from ..jev import ChoiceQ, JevDecider
+    from ..state import RunState
+
+    if settings is None:
+        raise RuntimeError("jev_markers needs Settings to reach the decision model")
+    decider = JevDecider(settings)
+    floor = settings.confidence_floor if abstain_below is None else abstain_below
+
+    per_cluster: dict[str, dict[str, Any]] = {}
+    for cluster, genes in markers.items():
+        size = int((adata.obs["leiden"] == cluster).sum())
+        state = RunState(f"annotate-{cluster}", context)
+        state.observe(tissue=context, cluster=cluster, n_cells_in_cluster=size,
+                      top_markers=genes)
+        decision = decider.decide(
+            "annotate_cluster",
+            {"cell_type": ChoiceQ(
+                instructions=(
+                    f"These are the genes most enriched in cluster {cluster} "
+                    f"({size} cells) of a {context} sample, ranked by "
+                    "differential expression against all other clusters. Which "
+                    "cell type do they indicate?"
+                ),
+                criteria=PBMC_VOCABULARY,
+                default="Unclear")},
+            state,
+        )["cell_type"]
+        per_cluster[cluster] = {
+            "label": decision.value,
+            "confidence": decision.confidence,
+            "probabilities": decision.raw.get("probabilities"),
+            "markers": genes[:5],
+        }
+
+    adata.uns["jev_annotation"] = per_cluster
+    labels = {
+        cluster: (info["label"]
+                  if (info["confidence"] is None or info["confidence"] >= floor)
+                  else "Unclear")
+        for cluster, info in per_cluster.items()
+    }
+    n_abstained = sum(1 for v in labels.values() if v == "Unclear")
+    return labels, None, f"jev_markers (floor {floor:.2f}, {n_abstained} abstained)"
