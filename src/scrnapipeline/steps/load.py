@@ -33,7 +33,7 @@ class LoadStep(Step):
         spec = state.dataset
         if spec.startswith("merlin:"):
             adata, label_key = _load_merlin(spec.split(":", 1)[1])
-            state.observe(pre_normalized=True)
+            state.observe(pre_normalized=True, sctab_feature_space=True)
         elif spec.startswith("h5ad:"):
             adata = sc.read_h5ad(spec.split(":", 1)[1])
             label_key = state.obs.get("label_key")

@@ -9,6 +9,19 @@ stringency, normalization method, HVG count, whether integration is needed,
 clustering resolution — with a calibrated probability.
 **Modal** runs the whole thing.
 
+Every stage runs the same three beats:
+
+1. **Claude builds the typed context** — the baseline question plus the observed
+   statistics, rewritten for this matrix, with the candidate answers narrowed to
+   what applies here.
+2. **Jev decides** among those candidates, with a calibrated probability. Below
+   the confidence floor the step's declared default is used and the fallback is
+   recorded.
+3. **The chosen thing runs** — a threshold, a method, or an entire *model*.
+   `executors.py` dispatches it in-process or, with `MODAL_REMOTE=1`, to a Modal
+   function, so a stage that selects a GPU-bound model sends only that model
+   remotely.
+
 The framing step matters. A step ships a generic baseline question, written
 before anyone saw the matrix; Claude rewrites it against the observed statistics,
 drops options that do not apply to this data, and describes each survivor in
@@ -96,8 +109,20 @@ held-out author labels:
 `pbmc3k` is loaded raw and its labels are grafted by barcode from
 `pbmc3k_processed`, so no label touches the pipeline itself.
 
+### Is scTab the right annotator?
+
+That is not a question the pipeline answers once, in its source. `annotate` makes
+the **model itself a decision**: `markers_llm` (Claude reads the markers),
+`celltypist` (logistic regression over curated references), or `sctab`. Claude
+frames the trade-off against the data, Jev picks, and the run records why.
+
+`sctab` is only offered when `sctab_feature_space` is set — i.e. when the matrix
+is already in its fixed 19,331-gene space. Running scTab on a matrix in a
+different gene space is not a worse answer, it is a broken one, so it is removed
+from the ballot rather than left as a trap.
+
 [scTab](https://github.com/theislab/scTab) (Fischer et al., *Nat Commun* 2024) is
-the intended third column — a de novo classifier trained across CELLxGENE, which
+the intended reference column — a de novo classifier trained across CELLxGENE, which
 answers the annotation question without any of this pipeline's choices.
 **It is not wired up yet**: `src/scrnapipeline/baselines.py` holds the slot and
 raises `NotImplementedError` rather than reporting a placeholder number. The
@@ -134,6 +159,23 @@ Clustering needs `igraph` + `leidenalg`; they are in the Modal image and in
 
 Output lands in `runs/<run_id>/`: `run.json` (decisions, step records, metrics)
 and `processed.h5ad`.
+
+## The demo UI
+
+`web/` is a static one-page walkthrough of a finished run: the eight steps, and
+at each one the options Jev was choosing between, the probability on each, the
+confidence against the floor, and plots of the data at that point. No build
+step, no framework — it is served as files.
+
+```bash
+python scripts/export_run.py runs/<run_id> web/data/run-demo.json --demo
+cd web && python3 -m http.server 5173     # or: npx vercel deploy --prod
+```
+
+`export_run.py` joins `run.json` with `processed.h5ad` (embedding, per-cell QC,
+clusters, markers) into the single record the page reads, and re-derives each
+decision's option set from the same step objects the pipeline used, so the page
+cannot show options the pipeline never offered. Details in `web/README.md`.
 
 ## Credentials
 
@@ -177,6 +219,8 @@ src/scrnapipeline/
   baselines.py               scTab slot (not implemented)
   steps/                     one module per pipeline step
 scripts/scan_secrets.py      push guard
+scripts/export_run.py        run.json + processed.h5ad -> the web demo's record
+web/                         static demo UI; see web/README.md
 tests/                       infra tests; no network, no keys
 ```
 

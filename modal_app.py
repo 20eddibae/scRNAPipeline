@@ -75,6 +75,33 @@ def run_pipeline(dataset: str = "pbmc3k", mode: str = "scripted",
     }
 
 
+@app.function(
+    image=image,
+    volumes={"/vol": volume},
+    secrets=[secret],
+    timeout=60 * 30,
+    cpu=4.0,
+    memory=16384,
+    # gpu="A10G",  # uncomment once a stage actually selects a GPU-bound model
+)
+def run_model(model: str, *args, **kwargs):
+    """Execute one named model for one pipeline stage.
+
+    This is the target of `executors.Executor` with MODAL_REMOTE=1. It exists so
+    that a stage whose decision selected a heavy model (scTab, scVI) can send
+    just that model to a GPU, while the rest of the stage stays where it is.
+    """
+    import sys
+
+    sys.path.insert(0, "/root")
+    from scrnapipeline import executors  # noqa: F401  (import guard)
+
+    raise NotImplementedError(
+        f"no remote implementation registered for {model!r}. Register it here "
+        "once the stage that selects it is ready to run remotely."
+    )
+
+
 @app.local_entrypoint()
 def main(dataset: str = "pbmc3k", mode: str = "scripted", context: str = "human PBMC"):
     result = run_pipeline.remote(dataset=dataset, mode=mode, context=context)
