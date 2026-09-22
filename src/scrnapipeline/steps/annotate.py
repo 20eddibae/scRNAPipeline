@@ -275,9 +275,121 @@ PBMC_VOCABULARY = {
 }
 
 
+# Asked of every cluster BEFORE it is named. Experiment 4 showed per-cluster
+# naming is capped by clustering: pbmc3k's cluster 5 holds ~316 CD8 T cells and
+# most of the NK cells, so every namer -- Claude, Jev, even the oracle -- has to
+# drop one type. Choosing a better namer cannot fix a cluster that is two
+# things. This question is where that gets caught.
+#
+# It is a semantic decision with no internal criterion, which is where the
+# decision model belongs (RESULTS.md, "Where the decision model belongs"), and
+# the boundary is genuinely biological: T-lineage plus cytotoxic genes in the
+# SAME cells is a CD8 T cell, T-lineage plus myeloid genes in the same cells
+# is a doublet, and T-lineage in HALF the cells of a cytotoxic cluster is two
+# populations. Co-positivity alone cannot say which -- knowing which lineages
+# legitimately co-express is the judgement.
+CLUSTER_NATURE = {
+    "one_type": "One population. The lineage markers that are present agree "
+                "with each other and are carried by most cells.",
+    "two_types": "Two populations in DIFFERENT cells: a lineage marker is "
+                 "carried by a large minority of cells and absent from the rest "
+                 "(e.g. CD3 in half of a cytotoxic cluster = CD8 T cells mixed "
+                 "with NK cells). Split the cluster before naming it.",
+    "doublets": "Heterotypic doublets: markers of lineages that never co-occur "
+                "in one real cell (T and myeloid, B and platelet) are co-expressed "
+                "in the SAME cells.",
+    "low_quality": "Damaged or stressed cells: mitochondrial, ribosomal or "
+                   "heat-shock genes dominate and lineage markers are weak.",
+}
+
+# Fraction-of-cells-positive, per lineage. Deliberately coarse: the question is
+# whether a lineage is carried by all, some or none of the cells.
+LINEAGES = {
+    "T (CD3D/CD3E)": ("CD3D", "CD3E"),
+    "cytotoxic (NKG7/GNLY)": ("NKG7", "GNLY"),
+    "B (MS4A1/CD79A)": ("MS4A1", "CD79A"),
+    "myeloid (LYZ/CD14)": ("LYZ", "CD14"),
+    "platelet (PPBP/PF4)": ("PPBP", "PF4"),
+}
+STRESS_PREFIXES = ("MT-", "RPS", "RPL", "HSPA", "HSPB", "DNAJ")
+
+
+def _lineage_evidence(adata: Any, cells: Any) -> dict[str, Any]:
+    """Per-cell lineage positivity inside one set of cells, plus stress share.
+
+    Pairs are reported only when both lineages are carried by >=10% of cells;
+    for a pair, `co_positive` / `expected_if_independent` near 1 means the two
+    lineages sit in the same cells about as often as chance would put them there.
+    """
+    import numpy as np
+
+    source = adata.raw.to_adata() if adata.raw is not None else adata
+    sub = source[cells]
+    pos: dict[str, Any] = {}
+    for name, genes in LINEAGES.items():
+        present = [g for g in genes if g in sub.var_names]
+        if not present:
+            continue
+        block = sub[:, present].X
+        block = block.toarray() if hasattr(block, "toarray") else np.asarray(block)
+        pos[name] = (block > 0).any(axis=1)
+    frac = {k: round(float(v.mean()), 3) for k, v in pos.items()}
+    pairs = {}
+    names = [k for k in pos if frac[k] >= 0.10]
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            co = float((pos[a] & pos[b]).mean())
+            pairs[f"{a} & {b}"] = {"co_positive": round(co, 3),
+                                   "expected_if_independent": round(frac[a] * frac[b], 3)}
+    stress = [g for g in sub.var_names if str(g).upper().startswith(STRESS_PREFIXES)]
+    total = np.asarray(sub.X.sum(axis=1)).ravel()
+    stress_share = (np.asarray(sub[:, stress].X.sum(axis=1)).ravel() / np.maximum(total, 1e-9)
+                    if stress else np.zeros(sub.n_obs))
+    return {"fraction_of_cells_positive": frac, "co_positivity": pairs,
+            "median_stress_gene_share": round(float(np.median(stress_share)), 3)}
+
+
+def cluster_nature_question(cluster: str, size: int) -> ChoiceQ:
+    return ChoiceQ(
+        instructions=(
+            f"Cluster {cluster} ({size} cells). Before this cluster is given a "
+            "cell-type name, decide what kind of cluster it is. You are given its "
+            "top differentially expressed genes, the fraction of its cells "
+            "positive for each immune lineage, how often pairs of lineages are "
+            "positive in the same cell, and the share of expression taken by "
+            "mitochondrial/ribosomal/heat-shock genes. Some lineages legitimately "
+            "co-express (CD8 T cells are CD3+ AND cytotoxic); others never do."),
+        criteria=CLUSTER_NATURE, default="one_type")
+
+
+def _split_cluster(adata: Any, cluster: str) -> dict[str, str]:
+    """Two-way split of one cluster in the embedding the clustering used.
+
+    k-means with k=2 rather than a finer Leiden pass: the decision already said
+    *two*, so a method that can return three would be second-guessing it.
+    Returns {old barcode -> new cluster id}; the ids are `<cluster>a` / `<cluster>b`.
+    """
+    import numpy as np
+    from sklearn.cluster import KMeans
+
+    emb_key = "X_emb" if "X_emb" in adata.obsm else "X_pca"
+    mask = (adata.obs["leiden"].astype(str) == cluster).to_numpy()
+    parts = KMeans(n_clusters=2, n_init=10, random_state=0).fit_predict(
+        np.asarray(adata.obsm[emb_key])[mask])
+    return dict(zip(adata.obs_names[mask], np.where(parts == 0, f"{cluster}a", f"{cluster}b")))
+
+
+def _top2_margin(probabilities: Any) -> float | None:
+    if not isinstance(probabilities, dict) or len(probabilities) < 2:
+        return None
+    top = sorted((float(v) for v in probabilities.values()), reverse=True)
+    return top[0] - top[1]
+
+
 def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
                   context: str, abstain_below: float | None = None,
-                  retry_with_evidence: bool = True):
+                  retry_with_evidence: bool = True, split_mixed: bool = True,
+                  margin_below: float = 0.30):
     """Ask Jev, per cluster, which cell type the marker genes indicate.
 
     One call per cluster rather than one per run. The probabilities are kept on
@@ -319,6 +431,38 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
             state,
         )["cell_type"]
 
+    def nature(cluster: str, size: int, genes: list[str], cells: Any):
+        state = RunState(f"nature-{cluster}", context)
+        state.observe(tissue=context, cluster=cluster, n_cells_in_cluster=size,
+                      top_markers=genes, **_lineage_evidence(adata, cells))
+        return decider.decide("cluster_nature",
+                              {"nature": cluster_nature_question(cluster, size)},
+                              state)["nature"]
+
+    # Pass 1: what kind of cluster is each one? Split the ones that are two
+    # populations, before any of them is named.
+    natures: dict[str, Any] = {}
+    if split_mixed:
+        leiden = adata.obs["leiden"].astype(str)
+        relabel: dict[str, str] = {}
+        for cluster in list(markers):
+            cells = (leiden == cluster).to_numpy()
+            d = nature(cluster, int(cells.sum()), markers[cluster], cells)
+            natures[cluster] = {"nature": d.value, "confidence": d.confidence,
+                                "probabilities": d.raw.get("probabilities"),
+                                "source": d.source}
+            if d.value == "two_types" and d.source == "jev" and cells.sum() >= 40:
+                relabel.update(_split_cluster(adata, cluster))
+        if relabel:
+            new = leiden.copy()
+            new.loc[list(relabel)] = [relabel[b] for b in relabel]
+            adata.obs["leiden_presplit"] = adata.obs["leiden"]
+            adata.obs["leiden"] = new.astype("category")
+            sc.tl.rank_genes_groups(adata, "leiden", method="wilcoxon")
+            markers = _top_markers(adata, n=10)
+            adata.uns["top_markers"] = markers
+        adata.uns["cluster_nature"] = natures
+
     per_cluster: dict[str, dict[str, Any]] = {}
     for cluster, genes in markers.items():
         size = int((adata.obs["leiden"] == cluster).sum())
@@ -330,9 +474,15 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
         # dead end, it is a request: the model has told us the ranked markers do
         # not settle this cluster, so fetch the evidence that would and ask once
         # more. One extra call, only for the clusters that need it.
+        # Two triggers. Low absolute confidence is "I don't know"; a small
+        # margin between the top two types is "I'm torn between two I do know"
+        # -- the pbmc3k CD8-vs-NK cluster sat at 0.64, cleared the floor, and
+        # never got its CD3 panel under the first trigger alone.
+        margin = _top2_margin(decision.raw.get("probabilities"))
         unresolved = (decision.value == "Unclear"
                       or (decision.confidence is not None
-                          and decision.confidence < floor))
+                          and decision.confidence < floor)
+                      or (margin is not None and margin < margin_below))
         if unresolved and retry_with_evidence:
             panel = _panel_expression(adata, cluster)
             if panel:
@@ -370,5 +520,8 @@ def _annotate_jev(adata: Any, markers: dict[str, list[str]], settings: Any,
     n_retried = sum(1 for i in per_cluster.values() if i["attempts"] > 1)
     n_rescued = sum(1 for i in per_cluster.values()
                     if i["resolved_by"] == "canonical panel")
+    n_split = sum(1 for n in natures.values() if n["nature"] == "two_types")
+    flagged = sorted(c for c, n in natures.items() if n["nature"] in ("doublets", "low_quality"))
     return labels, None, (f"jev_markers (floor {floor:.2f}, {n_abstained} abstained, "
-                          f"{n_retried} retried, {n_rescued} rescued by panel)")
+                          f"{n_retried} retried, {n_rescued} rescued by panel, "
+                          f"{n_split} split, flagged {flagged or 'none'})")
