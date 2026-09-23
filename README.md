@@ -1,5 +1,14 @@
 # Krino
 
+<p align="center">
+  <a href="docs/media/krino-demo.mp4">
+    <img src="docs/media/krino-demo.gif" alt="Krino demo: a pbmc3k run lighting up step by step, with Claude framing each decision and Jev answering with a probability on each option" width="760">
+  </a>
+  <br>
+  <sub><b><a href="docs/media/krino-demo.mp4">▶ Watch the full demo (MP4, 67 s)</a></b> · the preview above plays at 3× speed.
+  Shown: the pbmc3k demo, a recorded run replayed with Jev's probabilities flattened for display, as the page's banner says; every other dataset runs live.</sub>
+</p>
+
 An scRNA-seq analysis pipeline where the judgement calls are explicit.
 *Krino* is from the Greek κρίνω, "to separate, to judge": the pipeline's job
 is to separate cells, and its design is about who gets to judge each call.
@@ -193,8 +202,9 @@ cannot show options the pipeline never offered. Details in `web/README.md`.
 **No key is ever written into this repo, into the Modal image, or into a run
 record.** The layout:
 
-- keys live in `~/.config/modal-hackathon/`, mode 600; `.env` here is a symlink
-  to that file and is gitignored
+- keys live in `~/.config/modal-hackathon/`, mode 600, outside the working
+  tree; `scripts/serve_local.sh` exports them into the server process only.
+  No `.env` (not even a symlink) is kept in the repo directory
 - on Modal they live in the `ai-gateway` Modal secret and reach the container as
   an environment variable
 - Jev is reached through the **Vercel AI Gateway**: the Vercel `vck_...` key *is*
