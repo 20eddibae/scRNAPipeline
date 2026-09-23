@@ -248,4 +248,4 @@ tests/                       infra tests; no network, no keys
 ## Status
 
 Hackathon scaffold. Steps 1–8 run; the agent loop and the Jev layer are wired but
-have only been exercised offline. scTab is a stub.
+have only been exercised offline.
